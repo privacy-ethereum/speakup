@@ -147,24 +147,52 @@ As with the multiplication check, all polynomial checks are batched into a singl
 
 ### Cost
 
-Let $n$ be the number of committed variables, $t$ the number of polynomials, and $d$ the maximum degree.
+Let $n$ be the number of committed variables, $t$ the number of polynomials, $d$ the maximum degree, and $z$ the maximum number of terms in any single polynomial. The $n$ committed inputs are accounted for separately; the costs below are for the proof itself.
 
-```{list-table} Cost
+The communication is constant in $t$ and $z$ while computation grows linearly in the total number of polynomial terms.
+
+::::{container} side-by-side
+
+:::{container}
+
+```{list-table} Communication
 :header-rows: 1
 
 * -
   - Cost
   - Unit
-* - VOPE masking
+* - VOPE masking (one-time)
   - $(2d - 3) \cdot \lambda$
   - sVOLE
-* - Coefficients ($\mathcal{P} \to \mathcal{V}$)
+* - Coefficients ($\mathcal{P} \to \mathcal{V}$, one-time)
   - $d \cdot \lambda$
   - bits
-* - Challenge ($\mathcal{V} \to \mathcal{P}$)
+* - Challenge ($\mathcal{V} \to \mathcal{P}$, one-time)
   - $\lambda$
   - bits
 ```
+
+:::
+
+:::{container}
+
+```{list-table} Computation
+:header-rows: 1
+
+* -
+  - Cost
+  - Unit
+* - Prover
+  - $O(t \cdot d^2 \cdot z + d \cdot n)$
+  - $\mathbb{F}_{2^\lambda}$ ops
+* - Verifier
+  - $O(t \cdot d \cdot z)$
+  - $\mathbb{F}_{2^\lambda}$ ops
+```
+
+:::
+
+::::
 
 (memory-checking)=
 ## Memory Checking
