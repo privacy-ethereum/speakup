@@ -1,0 +1,5 @@
+docs/_build/
+docs/_static/diagrams/
+.venv/
+__pycache__/
+*drawio.bkp

@@ -1,0 +1,234 @@
+#profile-viewer *,
+#profile-viewer *::before,
+#profile-viewer *::after {
+    box-sizing: border-box;
+}
+
+#profile-viewer {
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+    background: #fafafa;
+    color: #212121;
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+#profile-viewer h1 {
+    font-size: 1.5rem;
+    margin-bottom: 16px;
+}
+
+#profile-viewer .summary-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-shrink: 0;
+}
+#profile-viewer .summary-panel {
+    flex: 1;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px 20px;
+}
+#profile-viewer .summary-panel-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #9e9e9e;
+    margin-bottom: 12px;
+}
+#profile-viewer .metric-card {
+    display: inline-block;
+    text-align: center;
+    padding: 0 16px;
+}
+#profile-viewer .metric-val {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #1976d2;
+    line-height: 1.2;
+}
+#profile-viewer .metric-val.private {
+    color: #f57c00;
+}
+#profile-viewer .metric-label {
+    font-size: 0.72rem;
+    color: #757575;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+#profile-viewer .summary-helper {
+    font-size: 0.78rem;
+    color: #9e9e9e;
+    margin-top: 8px;
+}
+#profile-viewer .summary-secondary {
+    font-size: 0.78rem;
+    color: #757575;
+    margin-top: 6px;
+}
+#profile-viewer .cost-bar {
+    height: 4px;
+    border-radius: 2px;
+    display: flex;
+    overflow: hidden;
+    margin: 8px 0 4px;
+}
+#profile-viewer .cost-bar-pub { background: #1976d2; }
+#profile-viewer .cost-bar-priv { background: #f57c00; }
+
+/* controls */
+#profile-viewer .hist-toolbar {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    align-items: flex-start;
+    font-size: 0.82rem;
+    padding: 8px 0 10px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #e0e0e0;
+    flex-shrink: 0;
+}
+#profile-viewer .hist-toolbar label {
+    cursor: pointer;
+}
+#profile-viewer .control-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: opacity 0.15s;
+}
+#profile-viewer .control-group .control-options {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+#profile-viewer .control-group.disabled,
+#profile-viewer .disabled {
+    opacity: 0.25;
+    pointer-events: none;
+}
+#profile-viewer .control-group-label {
+    font-weight: 600;
+    color: #616161;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+#profile-viewer .hist-toolbar .sep {
+    width: 1px;
+    height: 40px;
+    background: #e0e0e0;
+    align-self: center;
+}
+
+/* histogram */
+#profile-viewer .hist-row {
+    display: flex;
+    align-items: center;
+    height: 22px;
+    font-size: 0.82rem;
+}
+#profile-viewer .hist-name {
+    width: 105px;
+    min-width: 105px;
+    text-align: left;
+    padding-right: 10px;
+    color: #424242;
+    font-weight: 500;
+    white-space: nowrap;
+}
+#profile-viewer .hist-bar-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+#profile-viewer .hist-bar {
+    height: 16px;
+    min-width: 2px;
+    transition: width 0.3s;
+}
+#profile-viewer .hist-bar:first-child {
+    border-radius: 3px 0 0 3px;
+}
+#profile-viewer .hist-bar:last-of-type {
+    border-radius: 0 3px 3px 0;
+}
+#profile-viewer .hist-bar:only-of-type {
+    border-radius: 3px;
+}
+#profile-viewer .hist-count {
+    margin-left: 6px;
+    font-size: 0.78rem;
+    color: #757575;
+    min-width: 40px;
+}
+#profile-viewer .hist-bar.public {
+    background: #1976d2;
+}
+#profile-viewer .hist-bar.private {
+    background: #f57c00;
+}
+#profile-viewer .hist-section {
+    margin-bottom: 16px;
+}
+#profile-viewer .hist-section h3 {
+    font-size: 0.9rem;
+    color: #616161;
+    margin-bottom: 8px;
+}
+
+/* tooltip */
+#profile-viewer .help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    color: #616161;
+    font-size: 0.65rem;
+    font-weight: 700;
+    cursor: help;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+#profile-viewer #cost-tooltip {
+    display: none;
+    position: fixed;
+    width: 280px;
+    background: #424242;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.45;
+    padding: 10px 12px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    z-index: 2000;
+    pointer-events: none;
+}
+
+/* sections */
+#profile-viewer .pv-section {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+#profile-viewer #content {
+    display: none;
+    flex-direction: column;
+    min-height: 600px;
+}
+#profile-viewer #content.visible {
+    display: flex;
+}

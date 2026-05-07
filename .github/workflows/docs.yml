@@ -1,0 +1,43 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install drawio
+        run: |
+          curl -sL https://github.com/jgraph/drawio-desktop/releases/download/v29.6.1/drawio-amd64-29.6.1.deb -o drawio.deb
+          sudo dpkg -i drawio.deb || sudo apt-get install -f -y
+
+      - name: Build docs
+        run: xvfb-run make -C docs html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ github.pages_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
