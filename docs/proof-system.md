@@ -456,8 +456,6 @@ This section instantiates the parametric costs with concrete values to provide h
   - $1$
 * - $\mathbb{F}_2$ multiplication
   - $1$
-* - Set membership (timing, $m = T$)
-  - $83$
 * - ROM lookup
   - $90$
 * - RAM access
