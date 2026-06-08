@@ -197,7 +197,7 @@ The communication is constant in $t$ and $z$ while computation grows linearly in
 (memory-checking)=
 ## Memory Checking
 
-SpeakUp requires random access memory to model the WebAssembly linear memory, registers, call stack, and global variables. For this, SpeakUp applies the two-shuffle ZK-RAM construction of [Yang and Heath (2023)](https://eprint.iacr.org/2023/1099), which was originally presented over prime fields. SpeakUp adapts this construction to work over binary extension fields and integrates it with the QuickSilver protocol described above.
+SpeakUp requires random access memory to model the WebAssembly linear memory, registers, call stack, and global variables. For this, SpeakUp applies the two-shuffle ZK-RAM construction of [Yang and Heath (2023)](https://eprint.iacr.org/2023/1115), which was originally presented over prime fields. SpeakUp adapts this construction to work over binary extension fields and integrates it with the QuickSilver protocol described above.
 
 The ZK-RAM allows the prover to read and write to a memory of $n$ elements over the course of $T$ accesses, proving to the verifier that all accesses are consistent — without revealing the memory contents. Memory tuples (address, value, version/time) are [packed](field-packing) into $\mathbb{F}_{2^\kappa}$ elements for the permutation proofs.
 
@@ -510,7 +510,7 @@ The following papers provide the foundations for SpeakUp's proof system:
 
 **RAM and Memory Checking**
 
-- [Two-Shuffles: From RAM to Secure Computation and Back](https://eprint.iacr.org/2023/1099) — Yang, Heath (2023).
+- [Two Shuffles Make a RAM](https://eprint.iacr.org/2023/1115) — Yang, Heath (2023).
 
 **VOLE Extension**
 
