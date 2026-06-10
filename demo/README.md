@@ -21,8 +21,13 @@ a wasm page loads.
 
 | Path | Purpose |
 | --- | --- |
-| `rust/` | wasm-bindgen wrapper around the mpz zk-vm: per-party entry points over a `MessagePort` duplex (`port_io.rs`), plus single-instance variants for tests. |
+| `guests/` | The example programs that run *on* the zk-vm (square, age, sha256) — edit these to customize the demo; the build picks changes up automatically. |
+| `rust/` | wasm-bindgen wrapper around the mpz zk-vm: per-party entry points over a `MessagePort` duplex (`port_io.rs`), plus single-instance variants for tests. Its `build.rs` compiles `guests/` to wasm. |
 | `web/` | Vite + TS UI: prover pane left, verifier pane right, one worker per party, the page relaying and counting protocol traffic. |
+
+The repo is self-contained: mpz is consumed as a git dependency pinned to its
+[`v2` branch](https://github.com/privacy-ethereum/mpz/tree/v2), and the guest
+wasm is built from the in-repo sources.
 
 ## Try it
 
@@ -43,13 +48,18 @@ cd ../web && npm install && npm run dev   # then open http://localhost:5173
 - Guided stepper UX, a date-picker age check as the narrative anchor, and a
   "cheat" button showing a tampered proof being rejected.
 
-## Running the spike
+## Developing
 
-Requires a sibling checkout of mpz at `../mpz` (path dependencies; will become
-pinned git deps once the demo stabilizes).
+Requires the `wasm32-unknown-unknown` target and [wasm-pack](https://rustwasm.github.io/wasm-pack/).
 
 ```sh
-cd rust
-cargo test                              # native: nothing yet (bindings are wasm-only)
-wasm-pack test --headless --chrome      # the browser smoke test
+cd guests && cargo test                 # native unit tests of the guest programs
+cd rust && wasm-pack test --headless --chrome   # end-to-end browser tests
+```
+
+To customize a guest, edit it under `guests/` and rebuild the pkg — the
+bindings' build script recompiles the guest wasm automatically:
+
+```sh
+cd rust && wasm-pack build --release --target web --out-dir ../web/src/pkg
 ```

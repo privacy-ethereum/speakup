@@ -34,9 +34,10 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use wasm_bindgen::prelude::*;
 use web_sys::MessagePort;
 
-const SQUARE_WASM: &[u8] = include_bytes!("../../../mpz/crates/vm-zk/tests/guests/square.wasm");
-const AGE_WASM: &[u8] = include_bytes!("../../../mpz/crates/vm-zk/tests/guests/age.wasm");
-const SHA256_WASM: &[u8] = include_bytes!("../../../mpz/crates/vm-zk/benches/guests/sha256.wasm");
+// The guest programs, compiled from `../guests` by build.rs.
+const SQUARE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/square.wasm"));
+const AGE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/age.wasm"));
+const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm"));
 
 /// The prover's RCOT receiver: Ferret over KOS over a Chou-Orlandi base OT.
 type ProverSvole = ferret::Receiver<kos::Receiver<chou_orlandi::Sender>>;

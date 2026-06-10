@@ -1,8 +1,4 @@
 # The wasm-bindgen wrapper around the mpz zk-vm for the browser demo.
-#
-# For now this depends on a sibling checkout of mpz via path deps (spike
-# phase); once the demo stabilizes these become git dependencies pinned to a
-# rev.
 [package]
 name = "zkvm-demo"
 version = "0.0.0"
@@ -15,12 +11,12 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-mpz-core = { path = "../../mpz/crates/core" }
-mpz-common = { path = "../../mpz/crates/common", features = ["test-utils"] }
-mpz-ot = { path = "../../mpz/crates/ot", features = ["ideal"] }
-mpz-vm-core = { path = "../../mpz/crates/vm-core" }
-mpz-vm-ir = { path = "../../mpz/crates/vm-ir" }
-mpz-vm-zk = { path = "../../mpz/crates/vm-zk" }
+mpz-core = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+mpz-common = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2", features = ["test-utils"] }
+mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 
 futures = "0.3"
 rand = "0.9"

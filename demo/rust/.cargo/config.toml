@@ -1,3 +1,7 @@
 # getrandom 0.3 requires opting into the browser backend via cfg.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+# libgit2's transport chokes on the mpz git dependency; use the git CLI.
+[net]
+git-fetch-with-cli = true

@@ -1,0 +1,12 @@
+[package]
+name = "square-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+# cdylib for the wasm artifact; rlib so `cargo test` can link a test harness.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mpz-vm-sys = { workspace = true }

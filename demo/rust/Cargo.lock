@@ -288,6 +288,7 @@ dependencies = [
 [[package]]
 name = "clmul"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
@@ -799,6 +800,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "matrix-transpose"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "thiserror",
 ]
@@ -822,6 +824,7 @@ dependencies = [
 [[package]]
 name = "mpz-circuits"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "mpz-fields",
 ]
@@ -829,6 +832,7 @@ dependencies = [
 [[package]]
 name = "mpz-cointoss"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "futures",
  "mpz-cointoss-core",
@@ -841,6 +845,7 @@ dependencies = [
 [[package]]
 name = "mpz-cointoss-core"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "mpz-core",
  "opaque-debug",
@@ -851,6 +856,7 @@ dependencies = [
 [[package]]
 name = "mpz-common"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "async-task",
  "async-trait",
@@ -872,6 +878,7 @@ dependencies = [
 [[package]]
 name = "mpz-core"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "aes",
  "bcs",
@@ -897,6 +904,7 @@ dependencies = [
 [[package]]
 name = "mpz-fields"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "ark-ff",
  "ark-secp256r1",
@@ -918,6 +926,7 @@ dependencies = [
 [[package]]
 name = "mpz-ot"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -932,7 +941,6 @@ dependencies = [
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
- "serde",
  "serio",
  "thiserror",
  "tokio",
@@ -941,6 +949,7 @@ dependencies = [
 [[package]]
 name = "mpz-ot-core"
 version = "0.1.0-alpha.5"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "aes",
  "blake3",
@@ -970,6 +979,7 @@ dependencies = [
 [[package]]
 name = "mpz-vm-circuits"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "mpz-circuits",
  "mpz-fields",
@@ -979,6 +989,7 @@ dependencies = [
 [[package]]
 name = "mpz-vm-core"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "async-trait",
  "mpz-common",
@@ -992,6 +1003,7 @@ dependencies = [
 [[package]]
 name = "mpz-vm-ir"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "thiserror",
  "wasmparser",
@@ -1000,6 +1012,7 @@ dependencies = [
 [[package]]
 name = "mpz-vm-memory"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "mpz-fields",
  "mpz-vm-core",
@@ -1011,6 +1024,7 @@ dependencies = [
 [[package]]
 name = "mpz-vm-zk"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "blake3",
  "itybity",
@@ -1036,6 +1050,7 @@ dependencies = [
 [[package]]
 name = "mpz-zk-core"
 version = "0.1.0"
+source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 dependencies = [
  "blake3",
  "itybity",
