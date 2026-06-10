@@ -6,11 +6,15 @@
 
 import init, {
   prover_age,
+  prover_regex,
   prover_sha256,
   prover_square,
+  prover_wat,
   verifier_age,
+  verifier_regex,
   verifier_sha256,
   verifier_square,
+  verifier_wat,
 } from "./pkg/zkvm_demo.js";
 
 export type Role = "prover" | "verifier";
@@ -24,7 +28,16 @@ export type PartyRequest =
       program: "sha256";
       message: Uint8Array; // empty on the verifier side
       msgLen: number;
-    };
+    }
+  | {
+      type: "run";
+      role: Role;
+      program: "regex";
+      pattern: string; // public: both sides get it
+      text: string; // empty on the verifier side
+      textLen: number;
+    }
+  | { type: "run"; role: Role; program: "wat"; source: string; x: number };
 
 export type PartyResponse =
   | { type: "ready" }
@@ -67,6 +80,20 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
           msg.role === "prover"
             ? await prover_sha256(port, msg.message)
             : await verifier_sha256(port, msg.msgLen);
+        break;
+      case "regex":
+        result = String(
+          msg.role === "prover"
+            ? await prover_regex(port, msg.pattern, msg.text)
+            : await verifier_regex(port, msg.pattern, msg.textLen),
+        );
+        break;
+      case "wat":
+        result = String(
+          msg.role === "prover"
+            ? await prover_wat(port, msg.source, msg.x)
+            : await verifier_wat(port, msg.source),
+        );
         break;
     }
     post({ type: "done", result, ms: performance.now() - start });

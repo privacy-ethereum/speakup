@@ -5,12 +5,16 @@ zk-vm: a prover and a verifier, both running as WebAssembly in your browser,
 executing a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
-**Status: working v0 over the real protocol.** Three guests run end-to-end in
+**Status: working v0 over the real protocol.** Four guests run end-to-end in
 the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
 private number), `age` (prove 18+ without revealing the birth date, with a
-date picker), and `sha256` (digest of a private message) — with correlated
-randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension,
-Ferret expansion), not an ideal functionality. **Each party runs in its own
+date picker), `sha256` (digest of a private message), and `regex` (prove a
+**private** string matches a **public** pattern via an oblivious DFA — the
+host compiles the regex with `regex-automata`, the guest evaluates the table
+branch-free over a one-hot state vector; demo limits: 32 DFA states, 16 byte
+classes, 256-byte strings) — with correlated randomness from the **real OT
+stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
+functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol
 over a `MessageChannel`; the page relays the messages and surfaces live
 traffic counters (a square proof is ~21 messages / ~900 KB, ~330 ms).
@@ -47,6 +51,18 @@ cd ../web && npm install && npm run dev   # then open http://localhost:5173
   never span separate workers anyway). Setup costs ~tens of ms in-browser.
 - Guided stepper UX, a date-picker age check as the narrative anchor, and a
   "cheat" button showing a tampered proof being rejected.
+
+## Feature flags
+
+Three features are gated behind flags (default **off**) in
+[`web/src/config.ts`](web/src/config.ts), pending a decision on whether they
+belong in this demo. Try them without a rebuild via URL params:
+
+| Flag | URL param | What it adds |
+| --- | --- | --- |
+| `slowMotion` | `?slow=1` | Relay-delay slider and a step-through-messages mode (the page relays all protocol traffic, so it can pause it). |
+| `cheat` | `?cheat=1` | "Tamper with a message" button: the relay flips one bit in protocol message #10 and the verifier rejects the proof. |
+| `watEditor` | `?wat=1` | "custom (wat)" tab: write a guest in WebAssembly text format; both parties compile the same (public) source and run it over a private `x`. |
 
 ## Developing
 

@@ -8,6 +8,7 @@ const GUESTS: &[(&str, &str)] = &[
     ("square_guest.wasm", "square.wasm"),
     ("age_guest.wasm", "age.wasm"),
     ("sha256_guest.wasm", "sha256.wasm"),
+    ("regex_guest.wasm", "regex.wasm"),
 ];
 
 fn main() {
@@ -17,7 +18,7 @@ fn main() {
     let target_dir = out.join("guests-target");
 
     // Cargo scans directories recursively for rerun-if-changed.
-    for sub in ["square", "age", "sha256", "Cargo.toml"] {
+    for sub in ["square", "age", "sha256", "regex", "Cargo.toml"] {
         println!("cargo:rerun-if-changed={}", guests.join(sub).display());
     }
 

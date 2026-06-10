@@ -13,6 +13,9 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must win over author display values (e.g. flex). */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -116,6 +119,7 @@ main {
 .log-line { padding: 0.15rem 0; color: var(--muted); }
 .log-line.ok { color: var(--prover); }
 .log-line.err { color: var(--err); }
+.log-line.warn { color: var(--accent); }
 .log-line.muted { color: var(--muted); font-style: italic; }
 
 .wire {
@@ -171,6 +175,60 @@ main {
   color: var(--muted);
   max-width: 18rem;
   text-align: center;
+}
+
+.center-input { width: 100%; }
+.center-input input,
+.center-input textarea {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  background: #11151c;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+}
+.center-input textarea { resize: vertical; }
+
+.controls {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--panel-edge);
+  padding-top: 0.75rem;
+}
+.control-row { display: flex; align-items: center; gap: 0.5rem; }
+.control-row input[type="range"] { flex: 1; }
+#next-msg {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.8rem;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cheat {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.8rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px dashed var(--err);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cheat.armed {
+  color: #fff;
+  background: var(--err);
+  border-style: solid;
 }
 
 footer {

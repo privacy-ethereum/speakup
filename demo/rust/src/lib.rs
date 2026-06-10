@@ -20,8 +20,10 @@
 //! - `sha256`: SHA-256 of a private message; only the digest is revealed.
 
 mod port_io;
+mod regex_table;
 
 pub use port_io::{PortIo, port_io};
+pub use regex_table::build_table;
 
 use futures::future::join;
 use mpz_common::{Context, context::test_st_context};
@@ -38,6 +40,7 @@ use web_sys::MessagePort;
 const SQUARE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/square.wasm"));
 const AGE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/age.wasm"));
 const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm"));
+const REGEX_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/regex.wasm"));
 
 /// The prover's RCOT receiver: Ferret over KOS over a Chou-Orlandi base OT.
 type ProverSvole = ferret::Receiver<kos::Receiver<chou_orlandi::Sender>>;
@@ -99,16 +102,22 @@ fn expect_i32(result: Option<Value>) -> Result<i32, JsError> {
     }
 }
 
+fn prover_from(module: Module) -> Result<Prover<ProverSvole>, JsError> {
+    Prover::new(module, prover_svole()).map_err(err)
+}
+
+fn verifier_from(module: Module) -> Result<Verifier<VerifierSvole>, JsError> {
+    Verifier::new(module, verifier_svole()).map_err(err)
+}
+
 fn prover_for(wasm: &[u8]) -> Result<(Prover<ProverSvole>, Module), JsError> {
     let module = parse_module(wasm)?;
-    let prover = Prover::new(module.clone(), prover_svole()).map_err(err)?;
-    Ok((prover, module))
+    Ok((prover_from(module.clone())?, module))
 }
 
 fn verifier_for(wasm: &[u8]) -> Result<(Verifier<VerifierSvole>, Module), JsError> {
     let module = parse_module(wasm)?;
-    let verifier = Verifier::new(module.clone(), verifier_svole()).map_err(err)?;
-    Ok((verifier, module))
+    Ok((verifier_from(module.clone())?, module))
 }
 
 // === square ===
@@ -419,6 +428,161 @@ pub async fn sha256_zkvm(message: Vec<u8>) -> Result<String, JsError> {
     let (rp, rv) = (rp?, rv?);
     if rp != rv {
         return Err(JsError::new("parties disagree on the digest"));
+    }
+    Ok(rp)
+}
+
+// === regex ===
+
+/// Looks up the guest's two buffers (public DFA table, private input) — both
+/// addresses are public constants.
+fn regex_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32), JsError> {
+    let table = expect_i32(vm.call_local(func(module, "table_ptr")?, vec![]).map_err(err)?)?;
+    let input = expect_i32(vm.call_local(func(module, "input_ptr")?, vec![]).map_err(err)?)?;
+    Ok((table as u32, input as u32))
+}
+
+async fn regex_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    table: &[u8],
+    text: &[u8],
+) -> Result<i32, JsError> {
+    let (table_ptr, input_ptr) = regex_ptrs(prover, module)?;
+    prover.write(table_ptr, Write::Public(table)).map_err(err)?;
+    prover.write(input_ptr, Write::Private(text)).map_err(err)?;
+    let r = prover
+        .call(
+            ctx,
+            func(module, "matches")?,
+            vec![Param::Public(Value::I32(text.len() as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+async fn regex_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    table: &[u8],
+    text_len: usize,
+) -> Result<i32, JsError> {
+    let (table_ptr, input_ptr) = regex_ptrs(verifier, module)?;
+    verifier.write(table_ptr, Write::Public(table)).map_err(err)?;
+    verifier.write(input_ptr, Write::Blind(text_len)).map_err(err)?;
+    let r = verifier
+        .call(
+            ctx,
+            func(module, "matches")?,
+            vec![Param::Public(Value::I32(text_len as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+fn check_regex_inputs(pattern: &str, text_len: usize) -> Result<Vec<u8>, JsError> {
+    if text_len == 0 || text_len > regex_dfa_core::INPUT_CAP {
+        return Err(JsError::new(&format!(
+            "text must be 1..={} bytes",
+            regex_dfa_core::INPUT_CAP
+        )));
+    }
+    build_table(pattern).map_err(|e| JsError::new(&e))
+}
+
+/// Prover side of the regex match: proves the private `text` fully matches
+/// the public `pattern`. Returns the revealed 0/1 flag.
+#[wasm_bindgen]
+pub async fn prover_regex(port: MessagePort, pattern: String, text: String) -> Result<i32, JsError> {
+    let table = check_regex_inputs(&pattern, text.len())?;
+    let module = parse_module(REGEX_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    regex_prover_inner(&mut prover, &mut ctx, &module, &table, text.as_bytes()).await
+}
+
+/// Verifier side of the regex match. Knows the pattern and the text length;
+/// learns only the revealed 0/1 flag.
+#[wasm_bindgen]
+pub async fn verifier_regex(
+    port: MessagePort,
+    pattern: String,
+    text_len: usize,
+) -> Result<i32, JsError> {
+    let table = check_regex_inputs(&pattern, text_len)?;
+    let module = parse_module(REGEX_WASM)?;
+    let mut verifier = verifier_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    regex_verifier_inner(&mut verifier, &mut ctx, &module, &table, text_len).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn regex_zkvm(pattern: String, text: String) -> Result<i32, JsError> {
+    let table = check_regex_inputs(&pattern, text.len())?;
+    let module = parse_module(REGEX_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut verifier = verifier_from(module.clone())?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        regex_prover_inner(&mut prover, &mut ctx_p, &module, &table, text.as_bytes()),
+        regex_verifier_inner(&mut verifier, &mut ctx_v, &module, &table, text.len()),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
+// === custom guest (WAT) ===
+
+/// Compiles WebAssembly text format to a zk-vm module. The source is public
+/// — both parties compile the same text, so they agree on the program.
+fn wat_module(source: &str) -> Result<Module, JsError> {
+    let bytes = wat::parse_str(source).map_err(|e| JsError::new(&format!("WAT: {e}")))?;
+    Module::parse(&bytes).map_err(err)
+}
+
+/// Prover side of a custom WAT guest: calls its exported `compute(x)` with
+/// `x` private, like the square program.
+#[wasm_bindgen]
+pub async fn prover_wat(port: MessagePort, source: String, x: i32) -> Result<i32, JsError> {
+    let module = wat_module(&source)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    square_prover_inner(&mut prover, &mut ctx, &module, x).await
+}
+
+/// Verifier side of a custom WAT guest.
+#[wasm_bindgen]
+pub async fn verifier_wat(port: MessagePort, source: String) -> Result<i32, JsError> {
+    let module = wat_module(&source)?;
+    let mut verifier = verifier_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    square_verifier_inner(&mut verifier, &mut ctx, &module).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn wat_zkvm(source: String, x: i32) -> Result<i32, JsError> {
+    let module = wat_module(&source)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut verifier = verifier_from(module.clone())?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        square_prover_inner(&mut prover, &mut ctx_p, &module, x),
+        square_verifier_inner(&mut verifier, &mut ctx_v, &module),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
     }
     Ok(rp)
 }

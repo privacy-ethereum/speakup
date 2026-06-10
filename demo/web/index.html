@@ -17,6 +17,8 @@
         <button data-program="square" class="active">square</button>
         <button data-program="age">age check</button>
         <button data-program="sha256">sha-256</button>
+        <button data-program="regex">regex</button>
+        <button data-program="wat" id="wat-tab" hidden>custom (wat)</button>
       </nav>
     </header>
 
@@ -32,20 +34,55 @@
           <input id="x-input" type="number" value="6" />
           <input id="date-input" type="date" value="1990-04-15" hidden />
           <input id="text-input" type="text" value="hello zk-vm" maxlength="4096" hidden />
+          <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
         </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
       </section>
 
       <section class="wire" aria-label="Protocol">
+        <div class="memory center-input" id="pattern-row" hidden>
+          <div class="label">public pattern — known to both</div>
+          <input id="pattern-input" type="text" value="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}" spellcheck="false" />
+        </div>
+        <div class="memory center-input" id="wat-row" hidden>
+          <div class="label">custom guest — public, both parties compile it</div>
+          <textarea id="wat-input" rows="10" spellcheck="false">(module
+  (import "vc" "reveal_i32" (func $reveal (param i32) (result i32)))
+  (import "vc" "reveal_i32_wait" (func $wait (param i32) (result i32)))
+
+  ;; computes over the prover's private x; only the
+  ;; value passed to reveal becomes public
+  (func (export "compute") (param $x i32) (result i32)
+    (call $wait
+      (call $reveal
+        (i32.mul (local.get $x) (local.get $x))))))</textarea>
+        </div>
+
         <button id="run">Run in zero-knowledge</button>
+
         <div class="channel" id="channel">
           <div class="channel-line"></div>
           <div class="channel-status" id="channel-status">idle</div>
         </div>
+
         <div class="result-box" id="result-box" hidden>
           <div class="label" id="result-label">revealed to both</div>
           <div class="result" id="result"></div>
         </div>
+
+        <div class="controls" id="slow-controls" hidden>
+          <label class="control-row">relay delay
+            <input id="delay-slider" type="range" min="0" max="500" step="25" value="0" />
+            <span id="delay-value">0 ms</span>
+          </label>
+          <label class="control-row">
+            <input id="step-mode" type="checkbox" /> step through messages
+          </label>
+          <button id="next-msg" hidden>deliver next message (<span id="queued-count">0</span> queued)</button>
+        </div>
+
+        <button id="cheat" class="cheat" hidden>⚡ tamper with a message</button>
+
         <p class="note">
           Runs the real protocol — Chou-Orlandi base OT, KOS extension, Ferret
           expansion — not a mock. Each party lives in its own web worker with

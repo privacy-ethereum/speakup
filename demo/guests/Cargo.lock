@@ -15,6 +15,18 @@ version = "0.1.0"
 source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
 
 [[package]]
+name = "regex-dfa-core"
+version = "0.0.0"
+
+[[package]]
+name = "regex-guest"
+version = "0.0.0"
+dependencies = [
+ "mpz-vm-sys",
+ "regex-dfa-core",
+]
+
+[[package]]
 name = "sha256-guest"
 version = "0.0.0"
 

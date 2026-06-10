@@ -1,3 +1,4 @@
+import { FEATURES } from "./config";
 import type { PartyRequest, PartyResponse, Role } from "./party.worker";
 import "./style.css";
 
@@ -20,6 +21,11 @@ const tabs = $("program-tabs");
 const xInput = $<HTMLInputElement>("x-input");
 const dateInput = $<HTMLInputElement>("date-input");
 const textInput = $<HTMLInputElement>("text-input");
+const regexTextInput = $<HTMLInputElement>("regex-text-input");
+const patternRow = $("pattern-row");
+const patternInput = $<HTMLInputElement>("pattern-input");
+const watRow = $("wat-row");
+const watInput = $<HTMLTextAreaElement>("wat-input");
 const inputLabel = $("input-label");
 const proverSource = $("prover-source");
 const verifierSource = $("verifier-source");
@@ -30,8 +36,15 @@ const channel = $("channel");
 const channelStatus = $("channel-status");
 const resultBox = $("result-box");
 const resultEl = $("result");
+const slowControls = $("slow-controls");
+const delaySlider = $<HTMLInputElement>("delay-slider");
+const delayValue = $("delay-value");
+const stepMode = $<HTMLInputElement>("step-mode");
+const nextMsgBtn = $<HTMLButtonElement>("next-msg");
+const queuedCount = $("queued-count");
+const cheatBtn = $<HTMLButtonElement>("cheat");
 
-type ProgramKey = "square" | "age" | "sha256";
+type ProgramKey = "square" | "age" | "sha256" | "regex" | "wat";
 
 /// Today as the packed YYYYMMDD integer the age guest expects.
 const todayPacked = () => {
@@ -39,10 +52,15 @@ const todayPacked = () => {
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 };
 
+const utf8len = (s: string) => new TextEncoder().encode(s).length;
+const hatch = (n: number) => `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n} bytes)`;
+
 interface Program {
   source: string;
-  input: HTMLInputElement;
+  input: HTMLInputElement | HTMLTextAreaElement;
   inputLabel: string;
+  /// Center-column public input row, if the program has one.
+  centerRow?: HTMLElement;
   /// Per-role requests, or an error message for invalid input.
   requests(): { prover: PartyRequest; verifier: PartyRequest } | string;
   /// What the verifier's blind view of the input looks like.
@@ -138,14 +156,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
         },
       };
     },
-    blind() {
-      const n = new TextEncoder().encode(textInput.value).length;
-      return `${"░".repeat(Math.min(n, 24))} (${n} bytes)`;
-    },
-    proverStage() {
-      const n = new TextEncoder().encode(textInput.value).length;
-      return `staging private message (${n} bytes)`;
-    },
+    blind: () => hatch(utf8len(textInput.value)),
+    proverStage: () => `staging private message (${utf8len(textInput.value)} bytes)`,
     render(result) {
       return {
         text: result,
@@ -154,6 +166,72 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       };
     },
     secretName: "the message",
+  },
+  regex: {
+    source: `fn matches(text: &[u8]) -> i32 {
+    // DFA compiled from the public pattern,
+    // evaluated obliviously over the
+    // private text — branch-free
+    reveal(dfa_matches(&TABLE, text))
+}`,
+    input: regexTextInput,
+    inputLabel: "private test string",
+    centerRow: patternRow,
+    requests() {
+      const pattern = patternInput.value;
+      if (!pattern) return "enter a pattern";
+      const text = regexTextInput.value;
+      const len = utf8len(text);
+      if (len === 0) return "test string must not be empty";
+      if (len > 256) return "test string too long (max 256 bytes)";
+      return {
+        prover: { type: "run", role: "prover", program: "regex", pattern, text, textLen: len },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "regex",
+          pattern,
+          text: "",
+          textLen: len,
+        },
+      };
+    },
+    blind: () => hatch(utf8len(regexTextInput.value)),
+    proverStage: () =>
+      `staging private test string (${utf8len(regexTextInput.value)} bytes)`,
+    render(result) {
+      const m = result === "1";
+      return {
+        text: m ? "✓ matches the pattern" : "✗ no match",
+        cls: m ? "ok" : "no",
+        log: m ? "proved: text matches the pattern" : "no match proven",
+      };
+    },
+    secretName: "the test string",
+  },
+  wat: {
+    source: `// compiled from the WAT editor
+// (public — both parties compile
+// the same program)`,
+    input: xInput,
+    inputLabel: "private input x",
+    centerRow: watRow,
+    requests() {
+      const x = Number(xInput.value);
+      if (!Number.isInteger(x)) return "x must be an integer";
+      const source = watInput.value;
+      if (!source.trim()) return "write a guest program";
+      return {
+        prover: { type: "run", role: "prover", program: "wat", source, x },
+        verifier: { type: "run", role: "verifier", program: "wat", source, x: 0 },
+      };
+    },
+    blind: () => "░░░░░░░░",
+    proverStage: () => `staging private input x = ${xInput.value}`,
+    render(result) {
+      return { text: result, cls: "", log: `result: ${result}` };
+    },
+    secretName: "x",
   },
 };
 
@@ -181,8 +259,12 @@ const selectProgram = (key: ProgramKey) => {
   for (const btn of tabs.querySelectorAll("button")) {
     btn.classList.toggle("active", btn.dataset.program === key);
   }
-  for (const other of Object.values(PROGRAMS)) other.input.hidden = true;
+  for (const other of Object.values(PROGRAMS)) {
+    other.input.hidden = true;
+    if (other.centerRow) other.centerRow.hidden = true;
+  }
   p.input.hidden = false;
+  if (p.centerRow) p.centerRow.hidden = false;
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
   verifierSource.textContent = p.source;
@@ -194,6 +276,25 @@ const selectProgram = (key: ProgramKey) => {
 tabs.addEventListener("click", (ev) => {
   const btn = (ev.target as HTMLElement).closest("button");
   if (btn?.dataset.program) selectProgram(btn.dataset.program as ProgramKey);
+});
+
+// --- feature flags ---
+
+$("wat-tab").hidden = !FEATURES.watEditor;
+slowControls.hidden = !FEATURES.slowMotion;
+cheatBtn.hidden = !FEATURES.cheat;
+
+delaySlider.addEventListener("input", () => {
+  delayValue.textContent = `${delaySlider.value} ms`;
+});
+
+let cheatArmed = false;
+cheatBtn.addEventListener("click", () => {
+  cheatArmed = !cheatArmed;
+  cheatBtn.classList.toggle("armed", cheatArmed);
+  cheatBtn.textContent = cheatArmed
+    ? "⚡ will tamper on the next run"
+    : "⚡ tamper with a message";
 });
 
 // --- readiness ---
@@ -212,21 +313,97 @@ const markReady = () => {
 
 // --- one protocol run ---
 
+/// Which relayed message a cheat corrupts: late enough to be past OT setup,
+/// early enough that every program reaches it.
+const TAMPER_AT = 10;
+
+interface QueuedMsg {
+  data: ArrayBuffer;
+  to: MessagePort;
+  dir: string;
+}
+
 interface RunState {
   msgs: number;
   bytes: number;
   start: number;
   results: Partial<Record<Role, string>>;
   ticker: number;
+  queue: QueuedMsg[];
+  pumping: boolean;
+  tamper: boolean;
 }
 let run: RunState | null = null;
+
+const updateStepUI = () => {
+  const waiting = run !== null && stepMode.checked && run.queue.length > 0;
+  nextMsgBtn.hidden = !waiting;
+  queuedCount.textContent = String(run?.queue.length ?? 0);
+};
+
+/// Forwards one queued message, tampering if this run is the cheating one.
+const forward = (state: RunState, item: QueuedMsg) => {
+  state.msgs += 1;
+  state.bytes += item.data.byteLength;
+  if (state.tamper && state.msgs === TAMPER_AT) {
+    const view = new Uint8Array(item.data);
+    view[Math.min(8, view.length - 1)] ^= 0x01;
+    const note = `⚡ the relay tampered with message #${state.msgs} (${item.dir}) — one bit flipped`;
+    log(proverLog, note, "warn");
+    log(verifierLog, note, "warn");
+  }
+  item.to.postMessage(item.data, [item.data]);
+};
+
+const pump = (state: RunState) => {
+  if (state.pumping) return;
+  state.pumping = true;
+  const step = () => {
+    if (run !== state) return; // run ended
+    if (stepMode.checked && FEATURES.slowMotion) {
+      state.pumping = false;
+      updateStepUI();
+      return;
+    }
+    const item = state.queue.shift();
+    if (!item) {
+      state.pumping = false;
+      return;
+    }
+    forward(state, item);
+    const delay = FEATURES.slowMotion ? Number(delaySlider.value) : 0;
+    if (delay > 0) setTimeout(step, delay);
+    else queueMicrotask(step);
+  };
+  step();
+};
+
+nextMsgBtn.addEventListener("click", () => {
+  if (!run) return;
+  const item = run.queue.shift();
+  if (item) forward(run, item);
+  updateStepUI();
+});
+
+stepMode.addEventListener("change", () => {
+  if (run && !stepMode.checked) pump(run);
+  updateStepUI();
+});
+
+const endRun = () => {
+  if (!run) return;
+  clearInterval(run.ticker);
+  channel.classList.remove("active");
+  run = null;
+  runBtn.disabled = false;
+  updateStepUI();
+  if (cheatArmed) cheatBtn.click(); // disarm after one use
+};
 
 const finishRun = () => {
   if (!run) return;
   const p = PROGRAMS[current];
   const { prover, verifier } = run.results;
-  channel.classList.remove("active");
-  clearInterval(run.ticker);
   const elapsed = performance.now() - run.start;
   const traffic = `${run.msgs} msgs · ${fmtBytes(run.bytes)}`;
   if (prover !== undefined && verifier !== undefined && prover === verifier) {
@@ -242,18 +419,15 @@ const finishRun = () => {
     channelStatus.textContent = "failed";
     log(verifierLog, `parties disagree: ${prover} vs ${verifier}`, "err");
   }
-  run = null;
-  runBtn.disabled = false;
+  endRun();
 };
 
 const failRun = (role: Role, message: string) => {
   if (!run) return;
-  clearInterval(run.ticker);
-  channel.classList.remove("active");
-  channelStatus.textContent = "failed";
+  channelStatus.textContent = "proof rejected ✗";
   log(role === "prover" ? proverLog : verifierLog, message, "err");
-  run = null;
-  runBtn.disabled = false;
+  log(verifierLog, "the proof did not verify — rejected", "err");
+  endRun();
 };
 
 for (const role of ["prover", "verifier"] as const) {
@@ -295,8 +469,9 @@ runBtn.addEventListener("click", () => {
   blindCell.textContent = p.blind();
   channel.classList.add("active");
 
-  // A fresh channel pair per run; the page relays prover <-> verifier and
-  // counts the traffic as it passes through.
+  // A fresh channel pair per run; the page relays prover <-> verifier
+  // through a queue, counting (and optionally delaying, stepping, or
+  // tampering with) the traffic as it passes through.
   const toProver = new MessageChannel();
   const toVerifier = new MessageChannel();
   const state: RunState = {
@@ -304,6 +479,9 @@ runBtn.addEventListener("click", () => {
     bytes: 0,
     start: performance.now(),
     results: {},
+    queue: [],
+    pumping: false,
+    tamper: cheatArmed,
     ticker: window.setInterval(() => {
       if (run === state) {
         channelStatus.textContent = `exchanging… ${state.msgs} msgs · ${fmtBytes(state.bytes)}`;
@@ -312,16 +490,15 @@ runBtn.addEventListener("click", () => {
   };
   run = state;
 
-  const relay = (from: MessagePort, to: MessagePort) => {
+  const relay = (from: MessagePort, to: MessagePort, dir: string) => {
     from.onmessage = (ev) => {
-      const data = ev.data as ArrayBuffer;
-      state.msgs += 1;
-      state.bytes += data.byteLength;
-      to.postMessage(data, [data]);
+      state.queue.push({ data: ev.data as ArrayBuffer, to, dir });
+      pump(state);
+      updateStepUI();
     };
   };
-  relay(toProver.port1, toVerifier.port1);
-  relay(toVerifier.port1, toProver.port1);
+  relay(toProver.port1, toVerifier.port1, "prover→verifier");
+  relay(toVerifier.port1, toProver.port1, "verifier→prover");
 
   channelStatus.textContent = "exchanging…";
   log(proverLog, p.proverStage());
@@ -330,6 +507,9 @@ runBtn.addEventListener("click", () => {
   log(verifierLog, "OT preprocessing (CO15 → KOS → Ferret)…");
   log(proverLog, "executing on the zk-vm");
   log(verifierLog, "verifying every instruction…");
+  if (state.tamper) {
+    log(verifierLog, "⚡ cheat armed: the relay will corrupt one message", "warn");
+  }
   workers.prover.postMessage(reqs.prover, [toProver.port2]);
   workers.verifier.postMessage(reqs.verifier, [toVerifier.port2]);
 });

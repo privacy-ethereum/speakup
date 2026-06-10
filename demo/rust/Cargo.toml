@@ -17,6 +17,8 @@ mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+regex-automata = "0.4"
+wat = "1"
 
 futures = "0.3"
 rand = "0.9"
@@ -29,6 +31,7 @@ web-sys = { version = "0.3", features = ["MessagePort", "MessageEvent", "Message
 # browser backends enabled.
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+regex-dfa-core = { version = "0.0.0", path = "../guests/regex-core" }
 
 [dev-dependencies]
 futures = "0.3"
