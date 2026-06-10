@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>zk-vm — prove a computation without revealing your input</title>
+  </head>
+  <body>
+    <header>
+      <h1>zk-vm <span class="subtitle">zero-knowledge virtual machine, live in your browser</span></h1>
+      <p class="tagline">
+        A real Rust program, compiled to WebAssembly, executed under
+        zero-knowledge: the <b>prover</b> keeps its input private, the
+        <b>verifier</b> checks every step — and learns only the result.
+      </p>
+    </header>
+
+    <main>
+      <section class="pane prover" aria-label="Prover">
+        <h2>Prover <span class="who">— holds the secret</span></h2>
+        <div class="program-box">
+          <div class="label">program</div>
+          <pre><code>fn compute(x: i32) -&gt; i32 {
+    reveal((x + 1) * (x + 1))
+}</code></pre>
+        </div>
+        <div class="memory">
+          <div class="label">private input <code>x</code></div>
+          <input id="x-input" type="number" value="6" />
+        </div>
+        <div class="log" id="prover-log" aria-live="polite"></div>
+      </section>
+
+      <section class="wire" aria-label="Protocol">
+        <button id="run">Run in zero-knowledge</button>
+        <div class="channel" id="channel">
+          <div class="channel-line"></div>
+          <div class="channel-status" id="channel-status">idle</div>
+        </div>
+        <div class="result-box" id="result-box" hidden>
+          <div class="label">revealed to both</div>
+          <div class="result" id="result"></div>
+        </div>
+        <p class="note">
+          ⚠ demo build: both parties run in this page; in production they are
+          different machines. Worker-per-party split is the next milestone.
+        </p>
+      </section>
+
+      <section class="pane verifier" aria-label="Verifier">
+        <h2>Verifier <span class="who">— sees the proof, not the secret</span></h2>
+        <div class="program-box">
+          <div class="label">program (same module, same hash)</div>
+          <pre><code>fn compute(x: i32) -&gt; i32 {
+    reveal((x + 1) * (x + 1))
+}</code></pre>
+        </div>
+        <div class="memory">
+          <div class="label">prover's input, as the verifier sees it</div>
+          <div class="blind" id="blind-cell">░░░░░░░░</div>
+        </div>
+        <div class="log" id="verifier-log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer>
+      Built on <a href="https://github.com/privacy-ethereum/mpz">mpz</a>.
+      This page has no server: nothing you type leaves your browser.
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
