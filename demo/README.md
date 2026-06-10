@@ -5,14 +5,16 @@ zk-vm: a prover and a verifier, both running as WebAssembly in your browser,
 executing a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
-**Status: working v0.** The `square` guest ((x+1)² over a private input) runs
-end-to-end in the browser behind a two-pane prover/verifier UI. Both parties
-currently execute in one web worker over an in-memory duplex (clearly labeled
-in the UI); splitting them into one worker per party over a real
-`MessageChannel` transport is the next milestone — it requires the real
-`CO15 → KOS → Ferret` OT stack, since the ideal-RCOT pair shares memory.
-Single-threaded, no SharedArrayBuffer, no special headers — it runs anywhere
-a wasm page loads.
+**Status: working v0 over the real protocol.** Three guests run end-to-end in
+the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
+private number), `age` (prove 18+ without revealing the birth date, with a
+date picker), and `sha256` (digest of a private message) — with correlated
+randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension,
+Ferret expansion), not an ideal functionality. Both parties currently execute
+in one web worker over an in-memory duplex (clearly labeled in the UI);
+splitting them into one worker per party over a `MessageChannel` transport is
+the next milestone. Single-threaded, no SharedArrayBuffer, no special
+headers — it runs anywhere a wasm page loads.
 
 ## Layout
 
@@ -35,7 +37,8 @@ cd ../web && npm install && npm run dev   # then open http://localhost:5173
   the wire visualization and a slow-motion control for free.
 - **Single-threaded wasm** for maximum compatibility (no COOP/COEP headers,
   works on GitHub Pages and phones). Demo-sized programs don't need rayon.
-- **Ideal RCOT** ("trusted setup — demo" banner) for v1; real Ferret OT later.
+- **Real OT from the start** (the ideal-RCOT pair shares memory, so it could
+  never span separate workers anyway). Setup costs ~tens of ms in-browser.
 - Guided stepper UX, a date-picker age check as the narrative anchor, and a
   "cheat" button showing a tampered proof being rejected.
 

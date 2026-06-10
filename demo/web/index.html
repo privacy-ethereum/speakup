@@ -13,6 +13,11 @@
         zero-knowledge: the <b>prover</b> keeps its input private, the
         <b>verifier</b> checks every step — and learns only the result.
       </p>
+      <nav class="programs" id="program-tabs" aria-label="Example programs">
+        <button data-program="square" class="active">square</button>
+        <button data-program="age">age check</button>
+        <button data-program="sha256">sha-256</button>
+      </nav>
     </header>
 
     <main>
@@ -20,13 +25,13 @@
         <h2>Prover <span class="who">— holds the secret</span></h2>
         <div class="program-box">
           <div class="label">program</div>
-          <pre><code>fn compute(x: i32) -&gt; i32 {
-    reveal((x + 1) * (x + 1))
-}</code></pre>
+          <pre><code id="prover-source"></code></pre>
         </div>
         <div class="memory">
-          <div class="label">private input <code>x</code></div>
+          <div class="label" id="input-label">private input</div>
           <input id="x-input" type="number" value="6" />
+          <input id="date-input" type="date" value="1990-04-15" hidden />
+          <input id="text-input" type="text" value="hello zk-vm" maxlength="4096" hidden />
         </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
       </section>
@@ -38,12 +43,13 @@
           <div class="channel-status" id="channel-status">idle</div>
         </div>
         <div class="result-box" id="result-box" hidden>
-          <div class="label">revealed to both</div>
+          <div class="label" id="result-label">revealed to both</div>
           <div class="result" id="result"></div>
         </div>
         <p class="note">
-          ⚠ demo build: both parties run in this page; in production they are
-          different machines. Worker-per-party split is the next milestone.
+          Runs the real protocol — Chou-Orlandi base OT, KOS extension, Ferret
+          expansion — not a mock. ⚠ demo build: both parties run in this page;
+          in production they are different machines.
         </p>
       </section>
 
@@ -51,9 +57,7 @@
         <h2>Verifier <span class="who">— sees the proof, not the secret</span></h2>
         <div class="program-box">
           <div class="label">program (same module, same hash)</div>
-          <pre><code>fn compute(x: i32) -&gt; i32 {
-    reveal((x + 1) * (x + 1))
-}</code></pre>
+          <pre><code id="verifier-source"></code></pre>
         </div>
         <div class="memory">
           <div class="label">prover's input, as the verifier sees it</div>

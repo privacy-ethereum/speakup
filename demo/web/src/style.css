@@ -29,6 +29,23 @@ h1 { margin: 0; font-size: 1.6rem; }
 .tagline { max-width: 46rem; margin: 0.6rem auto; color: var(--muted); }
 .tagline b { color: var(--text); }
 
+.programs { margin-top: 0.8rem; display: flex; gap: 0.4rem; justify-content: center; }
+.programs button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.9rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.programs button.active {
+  color: var(--bg);
+  background: var(--text);
+  border-color: var(--text);
+}
+
 main {
   flex: 1;
   display: grid;
@@ -140,6 +157,13 @@ main {
   font-family: ui-monospace, monospace;
   font-size: 2rem;
   color: var(--accent);
+}
+.result.ok { color: var(--prover); font-size: 1.5rem; }
+.result.no { color: var(--err); font-size: 1.5rem; }
+.result.digest {
+  font-size: 0.85rem;
+  word-break: break-all;
+  max-width: 18rem;
 }
 
 .note {
