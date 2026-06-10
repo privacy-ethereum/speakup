@@ -10,18 +10,19 @@ the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
 private number), `age` (prove 18+ without revealing the birth date, with a
 date picker), and `sha256` (digest of a private message) — with correlated
 randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension,
-Ferret expansion), not an ideal functionality. Both parties currently execute
-in one web worker over an in-memory duplex (clearly labeled in the UI);
-splitting them into one worker per party over a `MessageChannel` transport is
-the next milestone. Single-threaded, no SharedArrayBuffer, no special
-headers — it runs anywhere a wasm page loads.
+Ferret expansion), not an ideal functionality. **Each party runs in its own
+web worker** — two isolated WebAssembly memories — speaking the mpz protocol
+over a `MessageChannel`; the page relays the messages and surfaces live
+traffic counters (a square proof is ~21 messages / ~900 KB, ~330 ms).
+Single-threaded, no SharedArrayBuffer, no special headers — it runs anywhere
+a wasm page loads.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `rust/` | wasm-bindgen wrapper around the mpz zk-vm (both parties in one instance over an in-memory duplex, for now). |
-| `web/` | Vite + TS UI: prover pane left, verifier pane right, the wasm in a web worker. |
+| `rust/` | wasm-bindgen wrapper around the mpz zk-vm: per-party entry points over a `MessagePort` duplex (`port_io.rs`), plus single-instance variants for tests. |
+| `web/` | Vite + TS UI: prover pane left, verifier pane right, one worker per party, the page relaying and counting protocol traffic. |
 
 ## Try it
 

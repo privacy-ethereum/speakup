@@ -48,8 +48,10 @@
         </div>
         <p class="note">
           Runs the real protocol — Chou-Orlandi base OT, KOS extension, Ferret
-          expansion — not a mock. ⚠ demo build: both parties run in this page;
-          in production they are different machines.
+          expansion — not a mock. Each party lives in its own web worker with
+          its own isolated WebAssembly memory; this page only relays (and
+          counts) their messages. In production the two workers would be two
+          machines.
         </p>
       </section>
 

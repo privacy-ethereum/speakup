@@ -5,9 +5,23 @@
 #![cfg(target_arch = "wasm32")]
 
 use wasm_bindgen_test::*;
-use zkvm_demo::{age_zkvm, sha256_zkvm, square_zkvm};
+use zkvm_demo::{age_zkvm, prover_square, sha256_zkvm, square_zkvm, verifier_square};
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test]
+async fn square_runs_over_a_message_channel() {
+    // The per-party entry points over a real MessageChannel — the same
+    // transport the two-worker app uses, here with both ends in this test.
+    let chan = web_sys::MessageChannel::new().unwrap();
+    let (p, v) = futures::future::join(
+        prover_square(chan.port1(), 6),
+        verifier_square(chan.port2()),
+    )
+    .await;
+    assert_eq!(p.ok(), Some(49));
+    assert_eq!(v.ok(), Some(49));
+}
 
 #[wasm_bindgen_test]
 async fn square_runs_in_browser() {

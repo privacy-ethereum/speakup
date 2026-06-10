@@ -1617,6 +1617,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-sys"
+version = "0.3.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e0871acf327f283dc6da28a1696cdc64fb355ba9f935d052021fa77f35cce69"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1702,6 +1712,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
+ "js-sys",
  "mpz-common",
  "mpz-core",
  "mpz-ot",
@@ -1712,6 +1723,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
+ "web-sys",
 ]
 
 [[package]]
