@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>zk-vm — prove a computation without revealing your input</title>
+    <title>Speakup — prove a computation without revealing your input</title>
   </head>
   <body>
     <header>
-      <h1>zk-vm <span class="subtitle">zero-knowledge virtual machine, live in your browser</span></h1>
+      <h1>Speakup <span class="subtitle">zero-knowledge virtual machine, live in your browser</span></h1>
       <p class="tagline">
         A real Rust program, compiled to WebAssembly, executed under
         zero-knowledge: the <b>prover</b> keeps its input private, the
@@ -33,7 +33,7 @@
           <div class="label" id="input-label">private input</div>
           <input id="x-input" type="number" value="6" />
           <input id="date-input" type="date" value="1990-04-15" hidden />
-          <input id="text-input" type="text" value="hello zk-vm" maxlength="4096" hidden />
+          <input id="text-input" type="text" value="hello speakup" maxlength="4096" hidden />
           <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
         </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
@@ -107,7 +107,8 @@
     </main>
 
     <footer>
-      Built on <a href="https://github.com/privacy-ethereum/mpz">mpz</a>.
+      Built on <a href="https://github.com/privacy-ethereum/mpz">mpz</a> —
+      <a href="https://privacy-ethereum.github.io/speakup/">learn more about Speakup</a>.
       This page has no server: nothing you type leaves your browser.
     </footer>
 

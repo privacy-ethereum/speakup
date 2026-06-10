@@ -505,7 +505,7 @@ runBtn.addEventListener("click", () => {
   log(verifierLog, "blind slot allocated — bytes unknown");
   log(proverLog, "OT preprocessing (CO15 → KOS → Ferret)…");
   log(verifierLog, "OT preprocessing (CO15 → KOS → Ferret)…");
-  log(proverLog, "executing on the zk-vm");
+  log(proverLog, "executing on Speakup");
   log(verifierLog, "verifying every instruction…");
   if (state.tamper) {
     log(verifierLog, "⚡ cheat armed: the relay will corrupt one message", "warn");

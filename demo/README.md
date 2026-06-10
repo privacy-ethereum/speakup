@@ -1,8 +1,10 @@
-# zkvm-demo
+# Speakup demo
 
-A stand-alone browser demo of the [mpz](https://github.com/privacy-ethereum/mpz)
-zk-vm: a prover and a verifier, both running as WebAssembly in your browser,
-executing a Rust program (itself compiled to wasm) under zero-knowledge — and a
+A stand-alone browser demo of
+[Speakup](https://privacy-ethereum.github.io/speakup/), the zero-knowledge
+virtual machine built on [mpz](https://github.com/privacy-ethereum/mpz): a
+prover and a verifier, both running as WebAssembly in your browser, executing
+a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
 **Status: working v0 over the real protocol.** Four guests run end-to-end in
