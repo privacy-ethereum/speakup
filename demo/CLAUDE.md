@@ -57,7 +57,10 @@ regex table and CSV column index rely on this.
   message (`web/src/main.ts`): that's where traffic counters, the slow-motion
   queue, and the cheat tamper live.
 - `rust/src/port_io.rs` adapts a MessagePort to AsyncRead/AsyncWrite via mpsc
-  pumps (mpz's Context needs Send+Sync; MessagePort is neither).
+  pumps (the mux needs Send+Sync; MessagePort is neither). `port_mux.rs` runs
+  a `tlsn-mux` connection over it and implements mpz's `Mux`, so each context
+  fork gets its own logical stream (`Context::new` instead of
+  `new_single_threaded`).
 - Every program has `prover_*`/`verifier_*` entry points (used by the app)
   plus a single-instance `*_zkvm` (used by tests), sharing per-role inners.
 - Guest crates must NEVER be linked into `rust/` (mpz-vm-sys emits `vc.*`

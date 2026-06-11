@@ -1,6 +1,6 @@
 //! An `AsyncRead`/`AsyncWrite` duplex over a `MessagePort`.
 //!
-//! `Context::new_single_threaded` wants an io object that is `Send + Sync`,
+//! The mux connection above wants an io object that is `Send + Sync`,
 //! but `MessagePort` is neither. The port therefore never enters the io
 //! object: incoming messages are pumped into an unbounded channel by the
 //! port's `onmessage` callback, and outgoing writes are drained from another

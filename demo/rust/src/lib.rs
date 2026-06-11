@@ -26,9 +26,11 @@
 //! - `wat`: a custom guest compiled from (public) WebAssembly text.
 
 mod port_io;
+mod port_mux;
 mod regex_table;
 
 pub use port_io::{PortIo, port_io};
+pub use port_mux::{PortMux, port_mux};
 pub use regex_table::build_table;
 
 use futures::future::join;
@@ -57,6 +59,12 @@ type VerifierSvole = ferret::Sender<kos::Sender<chou_orlandi::Receiver>>;
 
 fn err(e: impl std::fmt::Debug) -> JsError {
     JsError::new(&format!("{e:?}"))
+}
+
+/// Builds a muxed [`Context`] over a `MessagePort` to the peer: protocol
+/// sub-tasks each get their own logical stream over the port.
+fn port_ctx(port: MessagePort) -> Result<Context, JsError> {
+    Context::new(port_mux(port).map_err(err)?).map_err(err)
 }
 
 /// The prover's half of the RCOT stack. The base-OT roles are swapped
@@ -161,7 +169,7 @@ async fn square_verifier_inner(
 #[wasm_bindgen]
 pub async fn prover_square(port: MessagePort, x: i32) -> Result<i32, JsError> {
     let (mut prover, module) = prover_for(SQUARE_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     square_prover_inner(&mut prover, &mut ctx, &module, x).await
 }
 
@@ -169,7 +177,7 @@ pub async fn prover_square(port: MessagePort, x: i32) -> Result<i32, JsError> {
 #[wasm_bindgen]
 pub async fn verifier_square(port: MessagePort) -> Result<i32, JsError> {
     let (mut verifier, module) = verifier_for(SQUARE_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     square_verifier_inner(&mut verifier, &mut ctx, &module).await
 }
 
@@ -259,7 +267,7 @@ async fn age_verifier_inner(
 pub async fn prover_age(port: MessagePort, birthdate: String, today: i32) -> Result<i32, JsError> {
     check_birthdate(&birthdate)?;
     let (mut prover, module) = prover_for(AGE_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     age_prover_inner(&mut prover, &mut ctx, &module, &birthdate, today).await
 }
 
@@ -267,7 +275,7 @@ pub async fn prover_age(port: MessagePort, birthdate: String, today: i32) -> Res
 #[wasm_bindgen]
 pub async fn verifier_age(port: MessagePort, today: i32) -> Result<i32, JsError> {
     let (mut verifier, module) = verifier_for(AGE_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     age_verifier_inner(&mut verifier, &mut ctx, &module, today).await
 }
 
@@ -390,7 +398,7 @@ sha256_inner!(
 pub async fn prover_sha256(port: MessagePort, message: Vec<u8>) -> Result<String, JsError> {
     check_msg_len(message.len())?;
     let (mut prover, module) = prover_for(SHA256_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     sha256_prover_inner(
         &mut prover,
         &mut ctx,
@@ -406,7 +414,7 @@ pub async fn prover_sha256(port: MessagePort, message: Vec<u8>) -> Result<String
 pub async fn verifier_sha256(port: MessagePort, msg_len: usize) -> Result<String, JsError> {
     check_msg_len(msg_len)?;
     let (mut verifier, module) = verifier_for(SHA256_WASM)?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     sha256_verifier_inner(
         &mut verifier,
         &mut ctx,
@@ -514,7 +522,7 @@ pub async fn prover_regex(port: MessagePort, pattern: String, text: String) -> R
     let table = check_regex_inputs(&pattern, text.len())?;
     let module = parse_module(REGEX_WASM)?;
     let mut prover = prover_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     regex_prover_inner(&mut prover, &mut ctx, &module, &table, text.as_bytes()).await
 }
 
@@ -529,7 +537,7 @@ pub async fn verifier_regex(
     let table = check_regex_inputs(&pattern, text_len)?;
     let module = parse_module(REGEX_WASM)?;
     let mut verifier = verifier_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     regex_verifier_inner(&mut verifier, &mut ctx, &module, &table, text_len).await
 }
 
@@ -568,7 +576,7 @@ fn wat_module(source: &str) -> Result<Module, JsError> {
 pub async fn prover_wat(port: MessagePort, source: String, x: i32) -> Result<i32, JsError> {
     let module = wat_module(&source)?;
     let mut prover = prover_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     square_prover_inner(&mut prover, &mut ctx, &module, x).await
 }
 
@@ -577,7 +585,7 @@ pub async fn prover_wat(port: MessagePort, source: String, x: i32) -> Result<i32
 pub async fn verifier_wat(port: MessagePort, source: String) -> Result<i32, JsError> {
     let module = wat_module(&source)?;
     let mut verifier = verifier_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     square_verifier_inner(&mut verifier, &mut ctx, &module).await
 }
 
@@ -669,7 +677,7 @@ pub async fn prover_luhn(port: MessagePort, number: String) -> Result<i32, JsErr
     check_luhn_len(number.len())?;
     let module = parse_module(LUHN_WASM)?;
     let mut prover = prover_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     luhn_prover_inner(&mut prover, &mut ctx, &module, number.as_bytes()).await
 }
 
@@ -680,7 +688,7 @@ pub async fn verifier_luhn(port: MessagePort, len: usize) -> Result<i32, JsError
     check_luhn_len(len)?;
     let module = parse_module(LUHN_WASM)?;
     let mut verifier = verifier_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     luhn_verifier_inner(&mut verifier, &mut ctx, &module, len).await
 }
 
@@ -789,7 +797,7 @@ pub async fn prover_csv(
     check_csv_inputs(csv.len(), col, threshold)?;
     let module = parse_module(CSV_WASM)?;
     let mut prover = prover_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     csv_prover_inner(&mut prover, &mut ctx, &module, csv.as_bytes(), col, threshold).await
 }
 
@@ -806,7 +814,7 @@ pub async fn verifier_csv(
     check_csv_inputs(len, col, threshold)?;
     let module = parse_module(CSV_WASM)?;
     let mut verifier = verifier_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
+    let mut ctx = port_ctx(port)?;
     csv_verifier_inner(&mut verifier, &mut ctx, &module, len, col, threshold).await
 }
 
