@@ -66,9 +66,10 @@ regex table and CSV column index rely on this.
 - Guest crates must NEVER be linked into `rust/` (mpz-vm-sys emits `vc.*`
   wasm imports nothing satisfies). Shared logic goes in a separate crate with
   no mpz-vm-sys dep — see `guests/regex-core`.
-- Feature flags (default off): `web/src/config.ts`, URL overrides
-  `?slow=1&cheat=1&wat=1` — slow-motion/stepper, tamper button, WAT editor.
-  Undecided whether they ship.
+- Feature flags: `web/src/config.ts`, URL overrides `?slow=0&cheat=1&wat=1`.
+  Relay-delay slider (default ON), tamper button and WAT editor (default
+  off, undecided whether they ship). The step-through-messages mode was
+  dropped.
 
 ## Status / open items
 

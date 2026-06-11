@@ -1,9 +1,9 @@
 // Feature flags for parts of the demo that aren't (yet) part of the story
-// we definitely want to tell. Flip the defaults here, or try them without a
-// rebuild via URL params: ?slow=1&cheat=1&wat=1
+// we definitely want to tell. Flip the defaults here, or override them
+// without a rebuild via URL params: ?slow=0&cheat=1&wat=1
 const DEFAULTS = {
-  /// Relay-speed slider + step-through-messages mode.
-  slowMotion: false,
+  /// Relay-speed slider.
+  slowMotion: true,
   /// "Tamper with a message" button: corrupt one relayed protocol message
   /// and watch the verifier reject the proof.
   cheat: false,
@@ -12,10 +12,14 @@ const DEFAULTS = {
 };
 
 const params = new URLSearchParams(location.search);
-const on = (v: string | null) => v === "1" || v === "true";
+const flag = (name: string, fallback: boolean) => {
+  const v = params.get(name);
+  if (v === null) return fallback;
+  return v === "1" || v === "true";
+};
 
 export const FEATURES = {
-  slowMotion: DEFAULTS.slowMotion || on(params.get("slow")),
-  cheat: DEFAULTS.cheat || on(params.get("cheat")),
-  watEditor: DEFAULTS.watEditor || on(params.get("wat")),
+  slowMotion: flag("slow", DEFAULTS.slowMotion),
+  cheat: flag("cheat", DEFAULTS.cheat),
+  watEditor: flag("wat", DEFAULTS.watEditor),
 };

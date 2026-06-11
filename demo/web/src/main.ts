@@ -44,9 +44,6 @@ const resultEl = $("result");
 const slowControls = $("slow-controls");
 const delaySlider = $<HTMLInputElement>("delay-slider");
 const delayValue = $("delay-value");
-const stepMode = $<HTMLInputElement>("step-mode");
-const nextMsgBtn = $<HTMLButtonElement>("next-msg");
-const queuedCount = $("queued-count");
 const cheatBtn = $<HTMLButtonElement>("cheat");
 const shaPresets = $("sha-presets");
 
@@ -455,12 +452,6 @@ interface RunState {
 }
 let run: RunState | null = null;
 
-const updateStepUI = () => {
-  const waiting = run !== null && stepMode.checked && run.queue.length > 0;
-  nextMsgBtn.hidden = !waiting;
-  queuedCount.textContent = String(run?.queue.length ?? 0);
-};
-
 /// Forwards one queued message, tampering if this run is the cheating one.
 const forward = (state: RunState, item: QueuedMsg) => {
   state.msgs += 1;
@@ -480,11 +471,6 @@ const pump = (state: RunState) => {
   state.pumping = true;
   const step = () => {
     if (run !== state) return; // run ended
-    if (stepMode.checked && FEATURES.slowMotion) {
-      state.pumping = false;
-      updateStepUI();
-      return;
-    }
     const item = state.queue.shift();
     if (!item) {
       state.pumping = false;
@@ -498,25 +484,12 @@ const pump = (state: RunState) => {
   step();
 };
 
-nextMsgBtn.addEventListener("click", () => {
-  if (!run) return;
-  const item = run.queue.shift();
-  if (item) forward(run, item);
-  updateStepUI();
-});
-
-stepMode.addEventListener("change", () => {
-  if (run && !stepMode.checked) pump(run);
-  updateStepUI();
-});
-
 const endRun = () => {
   if (!run) return;
   clearInterval(run.ticker);
   channel.classList.remove("active");
   run = null;
   runBtn.disabled = false;
-  updateStepUI();
   if (cheatArmed) cheatBtn.click(); // disarm after one use
 };
 
@@ -614,7 +587,6 @@ runBtn.addEventListener("click", () => {
     from.onmessage = (ev) => {
       state.queue.push({ data: ev.data as ArrayBuffer, to, dir });
       pump(state);
-      updateStepUI();
     };
   };
   relay(toProver.port1, toVerifier.port1, "prover→verifier");

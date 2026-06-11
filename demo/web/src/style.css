@@ -214,16 +214,6 @@ main {
 }
 .control-row { display: flex; align-items: center; gap: 0.5rem; }
 .control-row input[type="range"] { flex: 1; }
-#next-msg {
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 0.4rem 0.8rem;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  cursor: pointer;
-}
 
 .presets {
   margin-top: 0.5rem;
