@@ -26,6 +26,13 @@ const patternRow = $("pattern-row");
 const patternInput = $<HTMLInputElement>("pattern-input");
 const watRow = $("wat-row");
 const watInput = $<HTMLTextAreaElement>("wat-input");
+const sudokuInput = $<HTMLInputElement>("sudoku-input");
+const sudokuRow = $("sudoku-row");
+const puzzleInput = $<HTMLInputElement>("puzzle-input");
+const cardInput = $<HTMLInputElement>("card-input");
+const valuesInput = $<HTMLInputElement>("values-input");
+const thresholdRow = $("threshold-row");
+const thresholdInput = $<HTMLInputElement>("threshold-input");
 const inputLabel = $("input-label");
 const proverSource = $("prover-source");
 const verifierSource = $("verifier-source");
@@ -44,7 +51,15 @@ const nextMsgBtn = $<HTMLButtonElement>("next-msg");
 const queuedCount = $("queued-count");
 const cheatBtn = $<HTMLButtonElement>("cheat");
 
-type ProgramKey = "square" | "age" | "sha256" | "regex" | "wat";
+type ProgramKey =
+  | "square"
+  | "age"
+  | "sha256"
+  | "regex"
+  | "sudoku"
+  | "luhn"
+  | "mean"
+  | "wat";
 
 /// Today as the packed YYYYMMDD integer the age guest expects.
 const todayPacked = () => {
@@ -208,6 +223,143 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       };
     },
     secretName: "the test string",
+  },
+  sudoku: {
+    source: `fn check() -> i32 {
+    // rows, cols, boxes each contain 1-9;
+    // the private grid extends the clues
+    reveal(is_valid(&PUZZLE, &SOLUTION))
+}`,
+    input: sudokuInput,
+    inputLabel: "private solution (81 cells)",
+    centerRow: sudokuRow,
+    requests() {
+      const clean = (s: string) => s.replace(/\s/g, "");
+      const puzzle = clean(puzzleInput.value);
+      const solution = clean(sudokuInput.value);
+      if (!/^[0-9.]{81}$/.test(puzzle)) return "puzzle must be 81 cells (0-9 or .)";
+      if (!/^[1-9]{81}$/.test(solution)) return "solution must be 81 cells (1-9)";
+      return {
+        prover: { type: "run", role: "prover", program: "sudoku", puzzle, solution },
+        verifier: { type: "run", role: "verifier", program: "sudoku", puzzle, solution: "" },
+      };
+    },
+    blind: () => "░░░ … ░░░ (81 cells)",
+    proverStage: () => "staging private solution grid (81 cells)",
+    render(result) {
+      const ok = result === "1";
+      return {
+        text: ok ? "✓ valid solution" : "✗ not a valid solution",
+        cls: ok ? "ok" : "no",
+        log: ok
+          ? "proved: the puzzle is solved"
+          : "not proven: grid invalid or doesn't match the clues",
+      };
+    },
+    secretName: "the solution grid",
+  },
+  luhn: {
+    source: `fn check(len: i32) -> i32 {
+    // Luhn checksum over the private
+    // digits, branch-free
+    reveal(luhn_valid(&NUMBER[..len]))
+}`,
+    input: cardInput,
+    inputLabel: "private card number",
+    requests() {
+      const number = cardInput.value.replace(/[\s-]/g, "");
+      if (!/^\d{12,19}$/.test(number)) return "enter 12-19 digits";
+      return {
+        prover: { type: "run", role: "prover", program: "luhn", number, numLen: number.length },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "luhn",
+          number: "",
+          numLen: number.length,
+        },
+      };
+    },
+    blind() {
+      const n = cardInput.value.replace(/[\s-]/g, "").length;
+      return `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n} digits)`;
+    },
+    proverStage() {
+      const n = cardInput.value.replace(/[\s-]/g, "").length;
+      return `staging private card number (${n} digits)`;
+    },
+    render(result) {
+      const ok = result === "1";
+      return {
+        text: ok ? "✓ valid checksum" : "✗ invalid checksum",
+        cls: ok ? "ok" : "no",
+        log: ok ? "proved: the number passes Luhn" : "checksum does not pass",
+      };
+    },
+    secretName: "the card number",
+  },
+  mean: {
+    source: `fn mean_at_least(n, t: i32) -> i32 {
+    // sum the private values; compare
+    // against the public threshold
+    reveal(sum(&VALUES[..n]) >= t * n)
+}`,
+    input: valuesInput,
+    inputLabel: "private values (comma-separated)",
+    centerRow: thresholdRow,
+    requests() {
+      const values = valuesInput.value
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map(Number);
+      if (values.length === 0) return "enter at least one value";
+      if (values.length > 64) return "at most 64 values";
+      if (values.some((v) => !Number.isInteger(v) || v < 0 || v > 1_000_000)) {
+        return "values must be integers 0..1000000";
+      }
+      const threshold = Number(thresholdInput.value);
+      if (!Number.isInteger(threshold) || threshold < 0 || threshold > 1_000_000) {
+        return "threshold must be an integer 0..1000000";
+      }
+      return {
+        prover: {
+          type: "run",
+          role: "prover",
+          program: "mean",
+          values: new Int32Array(values),
+          n: values.length,
+          threshold,
+        },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "mean",
+          values: new Int32Array(),
+          n: values.length,
+          threshold,
+        },
+      };
+    },
+    blind() {
+      const n = valuesInput.value.split(",").filter((s) => s.trim()).length;
+      return `${"░░░░ ".repeat(Math.max(1, Math.min(n, 5)))}(${n} values)`;
+    },
+    proverStage() {
+      const n = valuesInput.value.split(",").filter((s) => s.trim()).length;
+      return `staging ${n} private values`;
+    },
+    render(result) {
+      const ok = result === "1";
+      return {
+        text: ok ? "✓ average ≥ threshold" : "✗ average < threshold",
+        cls: ok ? "ok" : "no",
+        log: ok
+          ? "proved: the mean reaches the threshold"
+          : "the mean does not reach the threshold",
+      };
+    },
+    secretName: "the values (and their sum)",
   },
   wat: {
     source: `// compiled from the WAT editor

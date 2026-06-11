@@ -7,15 +7,17 @@ prover and a verifier, both running as WebAssembly in your browser, executing
 a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
-**Status: working v0 over the real protocol.** Four guests run end-to-end in
+**Status: working v0 over the real protocol.** Seven guests run end-to-end in
 the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
 private number), `age` (prove 18+ without revealing the birth date, with a
 date picker), `sha256` (digest of a private message), and `regex` (prove a
 **private** string matches a **public** pattern via an oblivious DFA — the
 host compiles the regex with `regex-automata`, the guest evaluates the table
 branch-free over a one-hot state vector; demo limits: 32 DFA states, 16 byte
-classes, 256-byte strings) — with correlated randomness from the **real OT
-stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
+classes, 256-byte strings), `sudoku` (prove a private grid solves the public
+puzzle), `luhn` (prove a private card number passes the Luhn checksum), and
+`mean` (prove the average of private values reaches a public threshold) —
+with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol
 over a `MessageChannel`; the page relays the messages and surfaces live

@@ -41,6 +41,9 @@ const SQUARE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/square.wasm
 const AGE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/age.wasm"));
 const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm"));
 const REGEX_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/regex.wasm"));
+const SUDOKU_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sudoku.wasm"));
+const LUHN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/luhn.wasm"));
+const MEAN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mean.wasm"));
 
 /// The prover's RCOT receiver: Ferret over KOS over a Chou-Orlandi base OT.
 type ProverSvole = ferret::Receiver<kos::Receiver<chou_orlandi::Sender>>;
@@ -578,6 +581,348 @@ pub async fn wat_zkvm(source: String, x: i32) -> Result<i32, JsError> {
     let (rp, rv) = join(
         square_prover_inner(&mut prover, &mut ctx_p, &module, x),
         square_verifier_inner(&mut verifier, &mut ctx_v, &module),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
+// === sudoku ===
+
+/// Grid size shared with the sudoku guest.
+const SUDOKU_GRID: usize = 81;
+
+/// Parses an 81-character grid string into cell values. `allow_empty`
+/// accepts `0` / `.` cells (for the puzzle).
+fn parse_grid(s: &str, allow_empty: bool) -> Result<Vec<u8>, JsError> {
+    let cells: Vec<u8> = s
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            '1'..='9' => Ok(c as u8 - b'0'),
+            '0' | '.' if allow_empty => Ok(0),
+            _ => Err(JsError::new(&format!("invalid grid character: {c:?}"))),
+        })
+        .collect::<Result<_, _>>()?;
+    if cells.len() != SUDOKU_GRID {
+        return Err(JsError::new(&format!(
+            "grid must have {SUDOKU_GRID} cells, got {}",
+            cells.len()
+        )));
+    }
+    Ok(cells)
+}
+
+/// Looks up the sudoku guest's buffers (public puzzle, private solution).
+fn sudoku_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32), JsError> {
+    let puzzle = expect_i32(vm.call_local(func(module, "puzzle_ptr")?, vec![]).map_err(err)?)?;
+    let solution =
+        expect_i32(vm.call_local(func(module, "solution_ptr")?, vec![]).map_err(err)?)?;
+    Ok((puzzle as u32, solution as u32))
+}
+
+async fn sudoku_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    puzzle: &[u8],
+    solution: &[u8],
+) -> Result<i32, JsError> {
+    let (puzzle_ptr, solution_ptr) = sudoku_ptrs(prover, module)?;
+    prover.write(puzzle_ptr, Write::Public(puzzle)).map_err(err)?;
+    prover
+        .write(solution_ptr, Write::Private(solution))
+        .map_err(err)?;
+    let r = prover
+        .call(ctx, func(module, "check")?, vec![])
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+async fn sudoku_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    puzzle: &[u8],
+) -> Result<i32, JsError> {
+    let (puzzle_ptr, solution_ptr) = sudoku_ptrs(verifier, module)?;
+    verifier.write(puzzle_ptr, Write::Public(puzzle)).map_err(err)?;
+    verifier
+        .write(solution_ptr, Write::Blind(SUDOKU_GRID))
+        .map_err(err)?;
+    let r = verifier
+        .call(ctx, func(module, "check")?, vec![])
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+/// Prover side of the sudoku check: proves the private `solution` solves the
+/// public `puzzle`. Returns the revealed 0/1 flag.
+#[wasm_bindgen]
+pub async fn prover_sudoku(
+    port: MessagePort,
+    puzzle: String,
+    solution: String,
+) -> Result<i32, JsError> {
+    let puzzle = parse_grid(&puzzle, true)?;
+    let solution = parse_grid(&solution, false)?;
+    let module = parse_module(SUDOKU_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    sudoku_prover_inner(&mut prover, &mut ctx, &module, &puzzle, &solution).await
+}
+
+/// Verifier side of the sudoku check. Knows the puzzle; learns only the
+/// revealed 0/1 flag.
+#[wasm_bindgen]
+pub async fn verifier_sudoku(port: MessagePort, puzzle: String) -> Result<i32, JsError> {
+    let puzzle = parse_grid(&puzzle, true)?;
+    let module = parse_module(SUDOKU_WASM)?;
+    let mut verifier = verifier_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    sudoku_verifier_inner(&mut verifier, &mut ctx, &module, &puzzle).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn sudoku_zkvm(puzzle: String, solution: String) -> Result<i32, JsError> {
+    let puzzle = parse_grid(&puzzle, true)?;
+    let solution = parse_grid(&solution, false)?;
+    let module = parse_module(SUDOKU_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut verifier = verifier_from(module.clone())?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        sudoku_prover_inner(&mut prover, &mut ctx_p, &module, &puzzle, &solution),
+        sudoku_verifier_inner(&mut verifier, &mut ctx_v, &module, &puzzle),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
+// === luhn (card check) ===
+
+/// Length limits shared with the luhn guest (ISO/IEC 7812).
+const LUHN_MIN_LEN: usize = 12;
+const LUHN_MAX_LEN: usize = 19;
+
+fn check_luhn_len(len: usize) -> Result<(), JsError> {
+    if !(LUHN_MIN_LEN..=LUHN_MAX_LEN).contains(&len) {
+        return Err(JsError::new(&format!(
+            "number must have {LUHN_MIN_LEN}..={LUHN_MAX_LEN} digits, got {len}"
+        )));
+    }
+    Ok(())
+}
+
+async fn luhn_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    digits: &[u8],
+) -> Result<i32, JsError> {
+    let ptr = expect_i32(
+        prover
+            .call_local(func(module, "number_ptr")?, vec![])
+            .map_err(err)?,
+    )? as u32;
+    prover.write(ptr, Write::Private(digits)).map_err(err)?;
+    let r = prover
+        .call(
+            ctx,
+            func(module, "check")?,
+            vec![Param::Public(Value::I32(digits.len() as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+async fn luhn_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    len: usize,
+) -> Result<i32, JsError> {
+    let ptr = expect_i32(
+        verifier
+            .call_local(func(module, "number_ptr")?, vec![])
+            .map_err(err)?,
+    )? as u32;
+    verifier.write(ptr, Write::Blind(len)).map_err(err)?;
+    let r = verifier
+        .call(
+            ctx,
+            func(module, "check")?,
+            vec![Param::Public(Value::I32(len as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+/// Prover side of the card check: proves the private `number` (digits, any
+/// spacing stripped by the caller) passes the Luhn checksum. Returns the
+/// revealed 0/1 flag.
+#[wasm_bindgen]
+pub async fn prover_luhn(port: MessagePort, number: String) -> Result<i32, JsError> {
+    check_luhn_len(number.len())?;
+    let module = parse_module(LUHN_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    luhn_prover_inner(&mut prover, &mut ctx, &module, number.as_bytes()).await
+}
+
+/// Verifier side of the card check. Learns the length and the revealed 0/1
+/// flag, nothing else.
+#[wasm_bindgen]
+pub async fn verifier_luhn(port: MessagePort, len: usize) -> Result<i32, JsError> {
+    check_luhn_len(len)?;
+    let module = parse_module(LUHN_WASM)?;
+    let mut verifier = verifier_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    luhn_verifier_inner(&mut verifier, &mut ctx, &module, len).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn luhn_zkvm(number: String) -> Result<i32, JsError> {
+    check_luhn_len(number.len())?;
+    let module = parse_module(LUHN_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut verifier = verifier_from(module.clone())?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        luhn_prover_inner(&mut prover, &mut ctx_p, &module, number.as_bytes()),
+        luhn_verifier_inner(&mut verifier, &mut ctx_v, &module, number.len()),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
+// === mean (average threshold) ===
+
+/// Bounds shared with the mean guest; keep sums inside i32.
+const MEAN_MAX_VALUES: usize = 64;
+const MEAN_MAX_VALUE: i32 = 1_000_000;
+
+fn check_mean_inputs(n: usize, threshold: i32) -> Result<(), JsError> {
+    if n == 0 || n > MEAN_MAX_VALUES {
+        return Err(JsError::new(&format!(
+            "need 1..={MEAN_MAX_VALUES} values, got {n}"
+        )));
+    }
+    if !(0..=MEAN_MAX_VALUE).contains(&threshold) {
+        return Err(JsError::new(&format!(
+            "threshold must be 0..={MEAN_MAX_VALUE}"
+        )));
+    }
+    Ok(())
+}
+
+async fn mean_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    values: &[i32],
+    threshold: i32,
+) -> Result<i32, JsError> {
+    let ptr = expect_i32(
+        prover
+            .call_local(func(module, "values_ptr")?, vec![])
+            .map_err(err)?,
+    )? as u32;
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+    prover.write(ptr, Write::Private(&bytes)).map_err(err)?;
+    let params = vec![
+        Param::Public(Value::I32(values.len() as i32)),
+        Param::Public(Value::I32(threshold)),
+    ];
+    let r = prover
+        .call(ctx, func(module, "mean_at_least")?, params)
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+async fn mean_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    n: usize,
+    threshold: i32,
+) -> Result<i32, JsError> {
+    let ptr = expect_i32(
+        verifier
+            .call_local(func(module, "values_ptr")?, vec![])
+            .map_err(err)?,
+    )? as u32;
+    verifier.write(ptr, Write::Blind(n * 4)).map_err(err)?;
+    let params = vec![
+        Param::Public(Value::I32(n as i32)),
+        Param::Public(Value::I32(threshold)),
+    ];
+    let r = verifier
+        .call(ctx, func(module, "mean_at_least")?, params)
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+/// Prover side of the average check: proves the mean of the private
+/// `values` is at least the public `threshold`. Returns the revealed 0/1
+/// flag.
+#[wasm_bindgen]
+pub async fn prover_mean(
+    port: MessagePort,
+    values: Vec<i32>,
+    threshold: i32,
+) -> Result<i32, JsError> {
+    check_mean_inputs(values.len(), threshold)?;
+    if values.iter().any(|v| !(0..=MEAN_MAX_VALUE).contains(v)) {
+        return Err(JsError::new(&format!("values must be 0..={MEAN_MAX_VALUE}")));
+    }
+    let module = parse_module(MEAN_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    mean_prover_inner(&mut prover, &mut ctx, &module, &values, threshold).await
+}
+
+/// Verifier side of the average check. Learns how many values there are and
+/// the revealed 0/1 flag, nothing else.
+#[wasm_bindgen]
+pub async fn verifier_mean(port: MessagePort, n: usize, threshold: i32) -> Result<i32, JsError> {
+    check_mean_inputs(n, threshold)?;
+    let module = parse_module(MEAN_WASM)?;
+    let mut verifier = verifier_from(module.clone())?;
+    let mut ctx = Context::new_single_threaded(port_io(port));
+    mean_verifier_inner(&mut verifier, &mut ctx, &module, n, threshold).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn mean_zkvm(values: Vec<i32>, threshold: i32) -> Result<i32, JsError> {
+    check_mean_inputs(values.len(), threshold)?;
+    let module = parse_module(MEAN_WASM)?;
+    let mut prover = prover_from(module.clone())?;
+    let mut verifier = verifier_from(module.clone())?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        mean_prover_inner(&mut prover, &mut ctx_p, &module, &values, threshold),
+        mean_verifier_inner(&mut verifier, &mut ctx_v, &module, values.len(), threshold),
     )
     .await;
     let (rp, rv) = (rp?, rv?);

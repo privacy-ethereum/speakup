@@ -6,11 +6,44 @@
 
 use wasm_bindgen_test::*;
 use zkvm_demo::{
-    age_zkvm, build_table, prover_square, regex_zkvm, sha256_zkvm, square_zkvm, verifier_square,
-    wat_zkvm,
+    age_zkvm, build_table, luhn_zkvm, mean_zkvm, prover_square, regex_zkvm, sha256_zkvm,
+    square_zkvm, sudoku_zkvm, verifier_square, wat_zkvm,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+/// The Wikipedia example puzzle and its unique solution.
+const SUDOKU_PUZZLE: &str =
+    "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
+const SUDOKU_SOLUTION: &str =
+    "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
+
+#[wasm_bindgen_test]
+async fn sudoku_runs_in_browser() {
+    let valid = sudoku_zkvm(SUDOKU_PUZZLE.into(), SUDOKU_SOLUTION.into())
+        .await
+        .unwrap();
+    assert_eq!(valid, 1);
+    // One tampered cell: still 1-9 everywhere, but no longer a solution.
+    let mut bad = SUDOKU_SOLUTION.to_string();
+    bad.replace_range(0..1, "4");
+    assert_eq!(sudoku_zkvm(SUDOKU_PUZZLE.into(), bad).await.unwrap(), 0);
+}
+
+#[wasm_bindgen_test]
+async fn luhn_runs_in_browser() {
+    // A standard Visa test number; the second has a one-digit typo.
+    assert_eq!(luhn_zkvm("4539148803436467".into()).await.unwrap(), 1);
+    assert_eq!(luhn_zkvm("4539148803436468".into()).await.unwrap(), 0);
+}
+
+#[wasm_bindgen_test]
+async fn mean_runs_in_browser() {
+    // mean(62k, 71k, 58k) = 63'666.66… >= 60'000, < 70'000.
+    let values = vec![62_000, 71_000, 58_000];
+    assert_eq!(mean_zkvm(values.clone(), 60_000).await.unwrap(), 1);
+    assert_eq!(mean_zkvm(values, 70_000).await.unwrap(), 0);
+}
 
 #[wasm_bindgen_test]
 async fn square_runs_over_a_message_channel() {

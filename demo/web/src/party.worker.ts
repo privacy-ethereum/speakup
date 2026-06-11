@@ -6,14 +6,20 @@
 
 import init, {
   prover_age,
+  prover_luhn,
+  prover_mean,
   prover_regex,
   prover_sha256,
   prover_square,
+  prover_sudoku,
   prover_wat,
   verifier_age,
+  verifier_luhn,
+  verifier_mean,
   verifier_regex,
   verifier_sha256,
   verifier_square,
+  verifier_sudoku,
   verifier_wat,
 } from "./pkg/zkvm_demo.js";
 
@@ -37,7 +43,29 @@ export type PartyRequest =
       text: string; // empty on the verifier side
       textLen: number;
     }
-  | { type: "run"; role: Role; program: "wat"; source: string; x: number };
+  | { type: "run"; role: Role; program: "wat"; source: string; x: number }
+  | {
+      type: "run";
+      role: Role;
+      program: "sudoku";
+      puzzle: string; // public: both sides get it
+      solution: string; // empty on the verifier side
+    }
+  | {
+      type: "run";
+      role: Role;
+      program: "luhn";
+      number: string; // empty on the verifier side
+      numLen: number;
+    }
+  | {
+      type: "run";
+      role: Role;
+      program: "mean";
+      values: Int32Array; // empty on the verifier side
+      n: number;
+      threshold: number; // public: both sides get it
+    };
 
 export type PartyResponse =
   | { type: "ready" }
@@ -93,6 +121,27 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
           msg.role === "prover"
             ? await prover_wat(port, msg.source, msg.x)
             : await verifier_wat(port, msg.source),
+        );
+        break;
+      case "sudoku":
+        result = String(
+          msg.role === "prover"
+            ? await prover_sudoku(port, msg.puzzle, msg.solution)
+            : await verifier_sudoku(port, msg.puzzle),
+        );
+        break;
+      case "luhn":
+        result = String(
+          msg.role === "prover"
+            ? await prover_luhn(port, msg.number)
+            : await verifier_luhn(port, msg.numLen),
+        );
+        break;
+      case "mean":
+        result = String(
+          msg.role === "prover"
+            ? await prover_mean(port, msg.values, msg.threshold)
+            : await verifier_mean(port, msg.n, msg.threshold),
         );
         break;
     }

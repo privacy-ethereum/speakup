@@ -10,6 +10,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "luhn-guest"
+version = "0.0.0"
+dependencies = [
+ "mpz-vm-sys",
+]
+
+[[package]]
+name = "mean-guest"
+version = "0.0.0"
+dependencies = [
+ "mpz-vm-sys",
+]
+
+[[package]]
 name = "mpz-vm-sys"
 version = "0.1.0"
 source = "git+https://github.com/privacy-ethereum/mpz?branch=v2#bf7a00e89ed73c8eb679952cea31de745424b9a7"
@@ -32,6 +46,13 @@ version = "0.0.0"
 
 [[package]]
 name = "square-guest"
+version = "0.0.0"
+dependencies = [
+ "mpz-vm-sys",
+]
+
+[[package]]
+name = "sudoku-guest"
 version = "0.0.0"
 dependencies = [
  "mpz-vm-sys",
