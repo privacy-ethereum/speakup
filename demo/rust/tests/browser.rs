@@ -1,6 +1,6 @@
 //! Browser smoke tests: the zk-vm Prover/Verifier pair runs end-to-end in
 //! headless Chrome over the real OT stack. Run with
-//! `wasm-pack test --headless --chrome`.
+//! `wasm-pack test --headless --chrome --release -- --features no-bundler`.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -10,10 +10,18 @@ use zkvm_demo::{
     prover_square, regex_zkvm, sha256_zkvm, square_zkvm, verifier_square,
 };
 
-wasm_bindgen_test_configure!(run_in_browser);
+// A dedicated worker, not the page: rayon's parallel sections block the
+// calling thread (`Atomics.wait`), which the main browser thread forbids.
+wasm_bindgen_test_configure!(run_in_dedicated_worker);
+
+/// Starts web-spawn + the rayon pool (idempotent across tests).
+async fn init_threads() {
+    zkvm_demo::initialize(4).await.expect("threading init");
+}
 
 #[wasm_bindgen_test]
 async fn luhn_runs_in_browser() {
+    init_threads().await;
     // A standard Visa test number; the second has a one-digit typo.
     assert_eq!(luhn_zkvm("4539148803436467".into()).await.unwrap(), 1);
     assert_eq!(luhn_zkvm("4539148803436468".into()).await.unwrap(), 0);
@@ -21,6 +29,7 @@ async fn luhn_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn csv_runs_in_browser() {
+    init_threads().await;
     // The whole CSV is private; column 0's mean is 63'666.66…
     let csv = "62000,12\n71000,8\n58000,15\n";
     assert_eq!(csv_zkvm(csv.into(), 0, 60_000).await.unwrap(), 1);
@@ -31,6 +40,7 @@ async fn csv_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn square_runs_over_a_message_channel() {
+    init_threads().await;
     // The per-party entry points over a real MessageChannel — the same
     // transport the two-worker app uses, here with both ends in this test.
     let chan = web_sys::MessageChannel::new().unwrap();
@@ -45,6 +55,7 @@ async fn square_runs_over_a_message_channel() {
 
 #[wasm_bindgen_test]
 async fn square_runs_in_browser() {
+    init_threads().await;
     // (6 + 1)² = 49, with 6 as the prover's private input.
     let out = square_zkvm(6).await.expect("zk-vm run should succeed");
     assert_eq!(out, 49);
@@ -52,6 +63,7 @@ async fn square_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn age_runs_in_browser() {
+    init_threads().await;
     // Born 1985-03-12, checked as of 2026-06-10: 18+.
     let adult = age_zkvm("1985-03-12".into(), 2026_06_10).await.unwrap();
     assert_eq!(adult, 1);
@@ -86,6 +98,7 @@ fn regex_table_matches_off_vm() {
 
 #[wasm_bindgen_test]
 async fn regex_runs_in_browser() {
+    init_threads().await;
     // Private "alice@example.com" matches the public email pattern.
     let pat = r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}";
     assert_eq!(regex_zkvm(pat.into(), "alice@example.com".into()).await.unwrap(), 1);
@@ -94,6 +107,7 @@ async fn regex_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn custom_module_runs_in_browser() {
+    init_threads().await;
     // The "drop your own .wasm" path, fed one of our own guests: square's
     // compute(x) with x private.
     let wasm = guest_wasm("square").unwrap();
@@ -108,6 +122,7 @@ async fn custom_module_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn sha256_runs_in_browser() {
+    init_threads().await;
     // SHA-256("abc") is the classic test vector.
     let digest = sha256_zkvm(b"abc".to_vec()).await.unwrap();
     assert_eq!(
@@ -118,6 +133,7 @@ async fn sha256_runs_in_browser() {
 
 #[wasm_bindgen_test]
 async fn sha256_handles_a_1kib_message() {
+    init_threads().await;
     // Past the old 4 KiB-buffer layout's assumptions: the digest now lands
     // at ptr + len. Reference digest of 1024 x 0xAB from hashlib.
     let digest = sha256_zkvm(vec![0xAB; 1024]).await.unwrap();

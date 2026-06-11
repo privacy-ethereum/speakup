@@ -10,15 +10,26 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# web-spawn's snippet glue that resolves the pkg at runtime instead of through
+# a bundler — needed under wasm-bindgen-test. The app build (vite) uses the
+# default (bundler) glue.
+no-bundler = ["web-spawn/no-bundler"]
+
 [dependencies]
 mpz-core = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-common = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2", features = ["test-utils"] }
-mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
+# rayon: parallel transpose/hashing in the KOS/Ferret OT stack. mpz-vm-zk
+# already enables mpz-zk-core/rayon (the QuickSilver check) unconditionally.
+mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2", features = ["rayon"] }
 mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
+web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 regex-automata = "0.4"
+rayon = "1"
 
 futures = "0.3"
 rand = "0.9"

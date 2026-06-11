@@ -24,9 +24,11 @@ with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol
 over a `MessageChannel`; the page relays the messages and surfaces live
-traffic counters (a square proof is ~21 messages / ~900 KB, ~330 ms).
-Single-threaded, no SharedArrayBuffer, no special headers — it runs anywhere
-a wasm page loads.
+traffic counters (a square proof completes in ~130 ms). The wasm is
+multithreaded: each party runs a rayon pool on nested workers via
+[web-spawn](https://github.com/tlsnotary/tlsn-utils), so the heavy proving
+steps use all your cores. That requires cross-origin isolation
+(SharedArrayBuffer); a tiny service worker shim provides it on GitHub Pages.
 
 ## Layout
 
@@ -43,7 +45,7 @@ wasm is built from the in-repo sources.
 ## Try it
 
 ```sh
-cd rust && wasm-pack build --release --target web --out-dir ../web/src/pkg
+cd rust && wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
 cd ../web && npm install && npm run dev   # then open http://localhost:5173
 ```
 
@@ -52,8 +54,11 @@ cd ../web && npm install && npm run dev   # then open http://localhost:5173
 - **Self-serve, static, no backend.** Two web workers with separate wasm
   memories; the page relays (and can throttle) their messages, which yields
   the wire visualization and a slow-motion control for free.
-- **Single-threaded wasm** for maximum compatibility (no COOP/COEP headers,
-  works on GitHub Pages and phones). Demo-sized programs don't need rayon.
+- **Multithreaded wasm** (shared memory + rayon via web-spawn): the
+  QuickSilver consistency check and the OT stack parallelize across cores,
+  which is what makes the bigger sha-256 inputs interactive. The COOP/COEP
+  headers this needs come from the dev server locally and from a
+  `coi-serviceworker` shim on GitHub Pages.
 - **Real OT from the start** (the ideal-RCOT pair shares memory, so it could
   never span separate workers anyway). Setup costs ~tens of ms in-browser.
 - Guided stepper UX, a date-picker age check as the narrative anchor, and a
@@ -73,11 +78,13 @@ belong in this demo. Try them without a rebuild via URL params:
 
 ## Developing
 
-Requires the `wasm32-unknown-unknown` target and [wasm-pack](https://rustwasm.github.io/wasm-pack/).
+Requires [wasm-pack](https://rustwasm.github.io/wasm-pack/); rustup picks up
+the pinned nightly toolchain (shared-memory wasm needs `build-std`) from
+`rust/rust-toolchain.toml` automatically.
 
 ```sh
 cd guests && cargo test                 # native unit tests of the guest programs
-cd rust && wasm-pack test --headless --chrome   # end-to-end browser tests
+cd rust && wasm-pack test --headless --chrome --release -- --features no-bundler   # end-to-end browser tests
 ```
 
 To customize a guest, edit it under `guests/` and rebuild the pkg — the
