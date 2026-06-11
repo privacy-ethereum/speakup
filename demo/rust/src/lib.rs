@@ -63,6 +63,38 @@ fn err(e: impl std::fmt::Debug) -> JsError {
     JsError::new(&format!("{e:?}"))
 }
 
+/// Initializes threading for this wasm instance: starts the web-spawn
+/// spawner and builds the rayon global pool with `threads` workers.
+///
+/// Must be called once per instance before any `prover_*`/`verifier_*` entry
+/// point. The heavy parallel sections (the QuickSilver check, OT transpose)
+/// block the calling thread while the pool works, so callers must run in a
+/// dedicated worker — never on the main browser thread, where `Atomics.wait`
+/// throws. Idempotent: later calls (e.g. other tests in the same instance)
+/// are no-ops.
+#[wasm_bindgen]
+pub async fn initialize(threads: usize) -> Result<(), JsValue> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::Relaxed) {
+        return Ok(());
+    }
+
+    wasm_bindgen_futures::JsFuture::from(web_spawn::start_spawner()).await?;
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.max(1))
+        .spawn_handler(|thread| {
+            // The pool lives for the worker's lifetime; drop the join handle.
+            let _ = web_spawn::spawn(move || thread.run());
+            Ok(())
+        })
+        .build_global()
+        .map_err(|e| JsError::new(&format!("{e:?}")))?;
+
+    Ok(())
+}
+
 /// Builds a muxed [`Context`] over a `MessagePort` to the peer: protocol
 /// sub-tasks each get their own logical stream over the port.
 fn port_ctx(port: MessagePort) -> Result<Context, JsError> {

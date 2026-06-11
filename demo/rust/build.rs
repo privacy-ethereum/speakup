@@ -40,6 +40,10 @@ fn main() {
         .arg("--target-dir")
         .arg(&target_dir)
         // Don't leak this build's flags/target settings into the guest build.
+        // Cargo config discovery is cwd-based, so run from ../guests: the
+        // shared-memory rustflags and build-std in rust/.cargo/config.toml
+        // must not apply to the guests (the zk-vm rejects atomics).
+        .current_dir(&guests)
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_TARGET_DIR")

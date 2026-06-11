@@ -22,8 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (wasm32 target)
-        run: rustup target add wasm32-unknown-unknown
+      - name: Install Rust (pinned nightly, wasm32, rust-src)
+        # rust/rust-toolchain.toml names the toolchain; `rustup toolchain
+        # install` reads it (rustup ≥1.28 no longer auto-installs on use).
+        run: rustup toolchain install
+        working-directory: rust
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -35,8 +38,10 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm pkg
-        # build.rs compiles guests/ to wasm32 as part of this.
-        run: wasm-pack build --release --target web --out-dir ../web/src/pkg
+        # build.rs compiles guests/ to wasm32 as part of this. The pkg goes to
+        # web/public (served as-is, not bundled) with web-spawn's no-bundler
+        # glue — see the note in web/src/party.worker.ts.
+        run: wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
         working-directory: rust
 
       - uses: actions/setup-node@v4

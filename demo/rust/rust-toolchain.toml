@@ -1,0 +1,8 @@
+[toolchain]
+# Shared-memory wasm needs nightly (build-std), and mpz v2 needs rustc ≥1.95.
+# Since rust-lang/rust#147225, +atomics no longer implies shared memory — the
+# explicit link args in .cargo/config.toml are what keep new nightlies working
+# (wasm-bindgen#4727 has the history).
+channel = "nightly-2026-06-01"
+components = ["rust-src"]
+targets = ["wasm32-unknown-unknown"]

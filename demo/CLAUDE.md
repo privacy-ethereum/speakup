@@ -11,20 +11,49 @@ picture; this file is for working on the code.
 cd guests && cargo test
 
 # bindings: e2e browser tests (headless Chrome) — the real test suite
-cd rust && wasm-pack test --headless --chrome --release
+cd rust && wasm-pack test --headless --chrome --release -- --features no-bundler
 
 # rebuild the web pkg after ANY rust/ or guests/ change
-cd rust && wasm-pack build --release --target web --out-dir ../web/src/pkg
+cd rust && wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
 
 # web app
-cd web && npm run dev          # add --host to test from other devices
+cd web && npm run dev          # --host needs https: threads want SharedArrayBuffer
 cd web && ./node_modules/.bin/tsc --noEmit   # type check (vite doesn't)
 ```
 
 `rust/build.rs` compiles `guests/` to wasm32 automatically (artifacts land in
 OUT_DIR; `lib.rs` embeds them) — editing a guest and rebuilding the pkg is one
 step. mpz comes from git, branch `v2`, fetched with the git CLI (libgit2
-chokes on the repo); `Cargo.lock` pins the exact rev.
+chokes on the repo); `Cargo.lock` pins the exact rev (≥ c215974 needed: the
+two-pass QuickSilver is what makes sha-256 64 KB fit in memory at all).
+
+## Threads
+
+The bindings are shared-memory wasm: pinned nightly + build-std
+(`rust/rust-toolchain.toml`), atomics + memory link flags
+(`rust/.cargo/config.toml`). Each party worker calls the `initialize(threads)`
+export, which starts web-spawn's spawner and a rayon global pool on nested
+workers — the QuickSilver check and the OT stack are the rayon users
+(hardwareConcurrency/2 per party). Hard-won constraints:
+
+- Guests must stay atomics-free. Cargo config discovery is cwd-based, so
+  build.rs runs the guest cargo from `../guests` — without that, the
+  shared-memory rustflags leak into the guest build and the zk-vm rejects it.
+- rayon sections block the calling thread via `Atomics.wait` — legal in a
+  worker, fatal on the main browser thread. That's why the e2e tests run
+  `run_in_dedicated_worker` and call `initialize` first.
+- The pkg is NOT bundled (built with web-spawn's `no-bundler` glue into
+  `web/public/pkg`, dynamically imported by `party.worker.ts`): vite inlines
+  web-spawn's nested thread-worker as a `data:` URL, whose `import.meta.url`
+  resolves nothing — bundled builds break only in production.
+- Cross-origin isolation: vite dev/preview send COOP/COEP headers
+  (`vite.config.ts`); GitHub Pages can't set headers, so `index.html` loads
+  `coi-serviceworker` (npm dep, served/copied by a tiny vite plugin; costs
+  one reload on first visit).
+- `--max-memory=4294967296` (the wasm32 ceiling): shared memories must
+  declare a max, and sha-256 64 KB peaks past 2 GB. 128 KB still aborts
+  (`RuntimeError: unreachable` = OOM panic) — that one needs upstream memory
+  work, not a flag.
 
 ## The one rule for guest code
 
@@ -92,8 +121,11 @@ regex table and CSV column index rely on this.
   site on every push to main and deploys via actions/deploy-pages. Repo
   settings → Pages → source must be "GitHub Actions". Vite base is
   `/speakup-demo/`.
-- Perf anchors (Chrome, M-series): square ≈ 0.4 s / 21 msgs / ~900 KB;
-  sha-256 16 KB ≈ 10.7 s / 3.1 MB; regex email ≈ 1.6 s; csv 4 rows ≈ 1.6 s.
+- Perf anchors (Chrome, M-series 18 cores → 9 threads/party, threaded build
+  + mpz c215974): square ≈ 0.13 s; regex email ≈ 0.34 s; csv 4 rows ≈ 0.12 s;
+  sha-256 16 KB ≈ 3.8 s / 400 msgs / ~2.5 MB; 64 KB ≈ 13 s (OOM-aborted
+  before c215974); 128 KB still OOMs. Pre-threads baselines: square 0.4 s,
+  sha-256 16 KB 10.7 s, regex 1.6 s.
 - Possible next: guided stepper narrative, more polish; Speakup RAM
   support will eventually allow private-offset designs (see mpz age-span
   discussion) and may relax the black_box discipline if `select` lands.

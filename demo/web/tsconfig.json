@@ -6,7 +6,7 @@
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
   "include": ["src"]
 }

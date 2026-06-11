@@ -1,6 +1,30 @@
-# getrandom 0.3 requires opting into the browser backend via cfg.
+# Threaded (shared-memory) wasm build. std must be rebuilt with atomics, so
+# this requires the pinned nightly (see rust-toolchain.toml). The guest build
+# does NOT see this file: build.rs runs cargo from ../guests, outside this
+# directory, precisely so these flags can't leak into the zk-vm guests.
+[unstable]
+build-std = ["panic_abort", "std"]
+
 [target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+rustflags = [
+    "-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals,+simd128",
+    "-Clink-arg=--shared-memory",
+    # Shared memories must declare a maximum up front; the reservation is
+    # virtual address space, not committed memory. 4 GB (the wasm32 limit,
+    # same as tlsn): sha-256 of a 64 KB message already peaks past 2 GB.
+    "-Clink-arg=--max-memory=4294967296",
+    "-Clink-arg=--import-memory",
+    "-Clink-arg=--export=__wasm_init_tls",
+    "-Clink-arg=--export=__tls_size",
+    "-Clink-arg=--export=__tls_align",
+    "-Clink-arg=--export=__tls_base",
+    # wasm-bindgen's thread-id injection needs this; newer rust-lld stopped
+    # exporting it by default.
+    "-Clink-arg=--export=__heap_base",
+    # getrandom 0.3/0.4 require opting into the browser backend via cfg.
+    "--cfg",
+    'getrandom_backend="wasm_js"',
+]
 
 # libgit2's transport chokes on the mpz git dependency; use the git CLI.
 [net]

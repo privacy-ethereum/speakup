@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Speakup — prove a computation without revealing your input</title>
+    <!-- Threaded wasm needs cross-origin isolation (SharedArrayBuffer).
+         GitHub Pages can't send COOP/COEP headers, so this service worker
+         injects them (one transparent reload on first visit). No-op where
+         the server already sends them, e.g. the vite dev server. -->
+    <script src="./coi-serviceworker.min.js"></script>
   </head>
   <body>
     <header>
