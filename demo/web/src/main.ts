@@ -27,8 +27,9 @@ const patternInput = $<HTMLInputElement>("pattern-input");
 const watRow = $("wat-row");
 const watInput = $<HTMLTextAreaElement>("wat-input");
 const cardInput = $<HTMLInputElement>("card-input");
-const valuesInput = $<HTMLInputElement>("values-input");
-const thresholdRow = $("threshold-row");
+const csvInput = $<HTMLTextAreaElement>("csv-input");
+const csvRow = $("csv-row");
+const colInput = $<HTMLInputElement>("col-input");
 const thresholdInput = $<HTMLInputElement>("threshold-input");
 const inputLabel = $("input-label");
 const proverSource = $("prover-source");
@@ -55,7 +56,7 @@ type ProgramKey =
   | "sha256"
   | "regex"
   | "luhn"
-  | "mean"
+  | "csv"
   | "wat";
 
 /// Today as the packed YYYYMMDD integer the age guest expects.
@@ -261,68 +262,61 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the card number",
   },
-  mean: {
-    source: `fn mean_at_least(n, t: i32) -> i32 {
-    // sum the private values; compare
-    // against the public threshold
-    reveal(sum(&VALUES[..n]) >= t * n)
+  csv: {
+    source: `fn mean_at_least(len, col, t) -> i32 {
+    // the WHOLE document is private; the
+    // guest parses it inside the VM:
+    // tracks columns, builds numbers,
+    // sums column \`col\` — branch-free
+    reveal(parse_and_compare(len, col, t))
 }`,
-    input: valuesInput,
-    inputLabel: "private values (comma-separated)",
-    centerRow: thresholdRow,
+    input: csvInput,
+    inputLabel: "private CSV document",
+    centerRow: csvRow,
     requests() {
-      const values = valuesInput.value
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-        .map(Number);
-      if (values.length === 0) return "enter at least one value";
-      if (values.length > 64) return "at most 64 values";
-      if (values.some((v) => !Number.isInteger(v) || v < 0 || v > 1_000_000)) {
-        return "values must be integers 0..1000000";
+      // Normalize: drop spaces and \r, ensure a trailing newline.
+      const csv =
+        csvInput.value.replace(/[ \r]/g, "").replace(/\n+$/, "") + "\n";
+      const len = utf8len(csv);
+      if (csv.trim() === "") return "paste a CSV document";
+      if (len > 8192) return "CSV too large (max 8 KB)";
+      if (!/^[0-9,\n]+$/.test(csv)) {
+        return "cells must be plain numbers (digits, commas, newlines only)";
+      }
+      const col = Number(colInput.value);
+      if (!Number.isInteger(col) || col < 0 || col > 15) {
+        return "column must be 0..15";
       }
       const threshold = Number(thresholdInput.value);
-      if (!Number.isInteger(threshold) || threshold < 0 || threshold > 1_000_000) {
-        return "threshold must be an integer 0..1000000";
+      if (!Number.isInteger(threshold) || threshold < 0 || threshold > 99999) {
+        return "threshold must be an integer 0..99999";
       }
       return {
-        prover: {
-          type: "run",
-          role: "prover",
-          program: "mean",
-          values: new Int32Array(values),
-          n: values.length,
-          threshold,
-        },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "mean",
-          values: new Int32Array(),
-          n: values.length,
-          threshold,
-        },
+        prover: { type: "run", role: "prover", program: "csv", csv, len, col, threshold },
+        verifier: { type: "run", role: "verifier", program: "csv", csv: "", len, col, threshold },
       };
     },
     blind() {
-      const n = valuesInput.value.split(",").filter((s) => s.trim()).length;
-      return `${"░░░░ ".repeat(Math.max(1, Math.min(n, 5)))}(${n} values)`;
+      const len = utf8len(
+        csvInput.value.replace(/[ \r]/g, "").replace(/\n+$/, "") + "\n",
+      );
+      return `${"░".repeat(Math.max(1, Math.min(len, 24)))} (${len} bytes)`;
     },
     proverStage() {
-      const n = valuesInput.value.split(",").filter((s) => s.trim()).length;
-      return `staging ${n} private values`;
+      const rows = csvInput.value.split("\n").filter((r) => r.trim()).length;
+      return `staging private CSV (${rows} rows — row count stays private too)`;
     },
     render(result) {
       const ok = result === "1";
       return {
-        text: ok ? "✓ average ≥ threshold" : "✗ average < threshold",
+        text: ok ? "✓ column average ≥ threshold" : "✗ not proven",
         cls: ok ? "ok" : "no",
         log: ok
-          ? "proved: the mean reaches the threshold"
-          : "the mean does not reach the threshold",
+          ? "proved: well-formed CSV, column mean reaches the threshold"
+          : "not proven: mean below threshold or malformed CSV",
       };
     },
-    secretName: "the values (and their sum)",
+    secretName: "the document (contents, row count, and sum)",
   },
   wat: {
     source: `// compiled from the WAT editor

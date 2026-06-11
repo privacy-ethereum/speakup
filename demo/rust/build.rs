@@ -10,7 +10,7 @@ const GUESTS: &[(&str, &str)] = &[
     ("sha256_guest.wasm", "sha256.wasm"),
     ("regex_guest.wasm", "regex.wasm"),
     ("luhn_guest.wasm", "luhn.wasm"),
-    ("mean_guest.wasm", "mean.wasm"),
+    ("csv_guest.wasm", "csv.wasm"),
 ];
 
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
         "regex",
         "regex-core",
         "luhn",
-        "mean",
+        "csv",
         "Cargo.toml",
     ] {
         println!("cargo:rerun-if-changed={}", guests.join(sub).display());

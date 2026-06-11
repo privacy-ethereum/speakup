@@ -7,14 +7,14 @@
 import init, {
   prover_age,
   prover_luhn,
-  prover_mean,
+  prover_csv,
   prover_regex,
   prover_sha256,
   prover_square,
   prover_wat,
   verifier_age,
   verifier_luhn,
-  verifier_mean,
+  verifier_csv,
   verifier_regex,
   verifier_sha256,
   verifier_square,
@@ -52,10 +52,11 @@ export type PartyRequest =
   | {
       type: "run";
       role: Role;
-      program: "mean";
-      values: Int32Array; // empty on the verifier side
-      n: number;
-      threshold: number; // public: both sides get it
+      program: "csv";
+      csv: string; // empty on the verifier side
+      len: number;
+      col: number; // public: both sides get them
+      threshold: number;
     };
 
 export type PartyResponse =
@@ -121,11 +122,11 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
             : await verifier_luhn(port, msg.numLen),
         );
         break;
-      case "mean":
+      case "csv":
         result = String(
           msg.role === "prover"
-            ? await prover_mean(port, msg.values, msg.threshold)
-            : await verifier_mean(port, msg.n, msg.threshold),
+            ? await prover_csv(port, msg.csv, msg.col, msg.threshold)
+            : await verifier_csv(port, msg.len, msg.col, msg.threshold),
         );
         break;
     }

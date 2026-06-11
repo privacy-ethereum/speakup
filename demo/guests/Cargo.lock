@@ -10,14 +10,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "luhn-guest"
+name = "csv-guest"
 version = "0.0.0"
 dependencies = [
  "mpz-vm-sys",
 ]
 
 [[package]]
-name = "mean-guest"
+name = "luhn-guest"
 version = "0.0.0"
 dependencies = [
  "mpz-vm-sys",

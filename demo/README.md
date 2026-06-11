@@ -16,7 +16,10 @@ host compiles the regex with `regex-automata`, the guest evaluates the table
 branch-free over a one-hot state vector; demo limits: 32 DFA states, 16 byte
 classes, 256-byte strings), `luhn` (prove a private card number passes the
 Luhn checksum), and
-`mean` (prove the average of private values reaches a public threshold) —
+`csv` (prove the average of one column of a **private CSV document** reaches
+a public threshold — the guest parses the CSV *inside the VM*, branch-free:
+oblivious column tracking, digit-by-digit number building, and validation,
+revealing neither the contents, the row count, nor the sum) —
 with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol

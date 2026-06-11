@@ -6,7 +6,7 @@
 
 use wasm_bindgen_test::*;
 use zkvm_demo::{
-    age_zkvm, build_table, luhn_zkvm, mean_zkvm, prover_square, regex_zkvm, sha256_zkvm,
+    age_zkvm, build_table, csv_zkvm, luhn_zkvm, prover_square, regex_zkvm, sha256_zkvm,
     square_zkvm, verifier_square, wat_zkvm,
 };
 
@@ -20,11 +20,13 @@ async fn luhn_runs_in_browser() {
 }
 
 #[wasm_bindgen_test]
-async fn mean_runs_in_browser() {
-    // mean(62k, 71k, 58k) = 63'666.66… >= 60'000, < 70'000.
-    let values = vec![62_000, 71_000, 58_000];
-    assert_eq!(mean_zkvm(values.clone(), 60_000).await.unwrap(), 1);
-    assert_eq!(mean_zkvm(values, 70_000).await.unwrap(), 0);
+async fn csv_runs_in_browser() {
+    // The whole CSV is private; column 0's mean is 63'666.66…
+    let csv = "62000,12\n71000,8\n58000,15\n";
+    assert_eq!(csv_zkvm(csv.into(), 0, 60_000).await.unwrap(), 1);
+    assert_eq!(csv_zkvm(csv.into(), 0, 70_000).await.unwrap(), 0);
+    // A malformed document proves nothing.
+    assert_eq!(csv_zkvm("62a00,12\n".into(), 0, 0).await.unwrap(), 0);
 }
 
 #[wasm_bindgen_test]

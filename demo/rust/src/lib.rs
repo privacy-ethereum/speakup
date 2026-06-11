@@ -42,7 +42,7 @@ const AGE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/age.wasm"));
 const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm"));
 const REGEX_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/regex.wasm"));
 const LUHN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/luhn.wasm"));
-const MEAN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mean.wasm"));
+const CSV_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/csv.wasm"));
 
 /// The prover's RCOT receiver: Ferret over KOS over a Chou-Orlandi base OT.
 type ProverSvole = ferret::Receiver<kos::Receiver<chou_orlandi::Sender>>;
@@ -698,42 +698,43 @@ pub async fn luhn_zkvm(number: String) -> Result<i32, JsError> {
     Ok(rp)
 }
 
-// === mean (average threshold) ===
+// === csv (column average) ===
 
-/// Bounds shared with the mean guest; keep sums inside i32.
-const MEAN_MAX_VALUES: usize = 64;
-const MEAN_MAX_VALUE: i32 = 1_000_000;
+/// Bounds shared with the csv guest.
+const CSV_CAP: usize = 8192;
+const CSV_MAX_COL: i32 = 16;
+const CSV_MAX_CELL: i32 = 99_999;
 
-fn check_mean_inputs(n: usize, threshold: i32) -> Result<(), JsError> {
-    if n == 0 || n > MEAN_MAX_VALUES {
-        return Err(JsError::new(&format!(
-            "need 1..={MEAN_MAX_VALUES} values, got {n}"
-        )));
+fn check_csv_inputs(len: usize, col: i32, threshold: i32) -> Result<(), JsError> {
+    if len == 0 || len > CSV_CAP {
+        return Err(JsError::new(&format!("CSV must be 1..={CSV_CAP} bytes")));
     }
-    if !(0..=MEAN_MAX_VALUE).contains(&threshold) {
-        return Err(JsError::new(&format!(
-            "threshold must be 0..={MEAN_MAX_VALUE}"
-        )));
+    if !(0..CSV_MAX_COL).contains(&col) {
+        return Err(JsError::new(&format!("column must be 0..{CSV_MAX_COL}")));
+    }
+    if !(0..=CSV_MAX_CELL).contains(&threshold) {
+        return Err(JsError::new(&format!("threshold must be 0..={CSV_MAX_CELL}")));
     }
     Ok(())
 }
 
-async fn mean_prover_inner(
+async fn csv_prover_inner(
     prover: &mut Prover<ProverSvole>,
     ctx: &mut Context,
     module: &Module,
-    values: &[i32],
+    csv: &[u8],
+    col: i32,
     threshold: i32,
 ) -> Result<i32, JsError> {
     let ptr = expect_i32(
         prover
-            .call_local(func(module, "values_ptr")?, vec![])
+            .call_local(func(module, "csv_ptr")?, vec![])
             .map_err(err)?,
     )? as u32;
-    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-    prover.write(ptr, Write::Private(&bytes)).map_err(err)?;
+    prover.write(ptr, Write::Private(csv)).map_err(err)?;
     let params = vec![
-        Param::Public(Value::I32(values.len() as i32)),
+        Param::Public(Value::I32(csv.len() as i32)),
+        Param::Public(Value::I32(col)),
         Param::Public(Value::I32(threshold)),
     ];
     let r = prover
@@ -743,21 +744,23 @@ async fn mean_prover_inner(
     expect_i32(r)
 }
 
-async fn mean_verifier_inner(
+async fn csv_verifier_inner(
     verifier: &mut Verifier<VerifierSvole>,
     ctx: &mut Context,
     module: &Module,
-    n: usize,
+    len: usize,
+    col: i32,
     threshold: i32,
 ) -> Result<i32, JsError> {
     let ptr = expect_i32(
         verifier
-            .call_local(func(module, "values_ptr")?, vec![])
+            .call_local(func(module, "csv_ptr")?, vec![])
             .map_err(err)?,
     )? as u32;
-    verifier.write(ptr, Write::Blind(n * 4)).map_err(err)?;
+    verifier.write(ptr, Write::Blind(len)).map_err(err)?;
     let params = vec![
-        Param::Public(Value::I32(n as i32)),
+        Param::Public(Value::I32(len as i32)),
+        Param::Public(Value::I32(col)),
         Param::Public(Value::I32(threshold)),
     ];
     let r = verifier
@@ -767,47 +770,51 @@ async fn mean_verifier_inner(
     expect_i32(r)
 }
 
-/// Prover side of the average check: proves the mean of the private
-/// `values` is at least the public `threshold`. Returns the revealed 0/1
-/// flag.
+/// Prover side of the CSV column average: the whole document is private;
+/// the guest parses it inside the VM and proves the mean of the (public)
+/// column reaches the (public) threshold. Returns the revealed 0/1 flag.
 #[wasm_bindgen]
-pub async fn prover_mean(
+pub async fn prover_csv(
     port: MessagePort,
-    values: Vec<i32>,
+    csv: String,
+    col: i32,
     threshold: i32,
 ) -> Result<i32, JsError> {
-    check_mean_inputs(values.len(), threshold)?;
-    if values.iter().any(|v| !(0..=MEAN_MAX_VALUE).contains(v)) {
-        return Err(JsError::new(&format!("values must be 0..={MEAN_MAX_VALUE}")));
-    }
-    let module = parse_module(MEAN_WASM)?;
+    check_csv_inputs(csv.len(), col, threshold)?;
+    let module = parse_module(CSV_WASM)?;
     let mut prover = prover_from(module.clone())?;
     let mut ctx = Context::new_single_threaded(port_io(port));
-    mean_prover_inner(&mut prover, &mut ctx, &module, &values, threshold).await
+    csv_prover_inner(&mut prover, &mut ctx, &module, csv.as_bytes(), col, threshold).await
 }
 
-/// Verifier side of the average check. Learns how many values there are and
-/// the revealed 0/1 flag, nothing else.
+/// Verifier side of the CSV column average. Learns the document length, the
+/// column, the threshold, and the revealed 0/1 flag — not the contents, the
+/// row count, or the sum.
 #[wasm_bindgen]
-pub async fn verifier_mean(port: MessagePort, n: usize, threshold: i32) -> Result<i32, JsError> {
-    check_mean_inputs(n, threshold)?;
-    let module = parse_module(MEAN_WASM)?;
+pub async fn verifier_csv(
+    port: MessagePort,
+    len: usize,
+    col: i32,
+    threshold: i32,
+) -> Result<i32, JsError> {
+    check_csv_inputs(len, col, threshold)?;
+    let module = parse_module(CSV_WASM)?;
     let mut verifier = verifier_from(module.clone())?;
     let mut ctx = Context::new_single_threaded(port_io(port));
-    mean_verifier_inner(&mut verifier, &mut ctx, &module, n, threshold).await
+    csv_verifier_inner(&mut verifier, &mut ctx, &module, len, col, threshold).await
 }
 
 /// Both parties in this instance (tests / reference).
 #[wasm_bindgen]
-pub async fn mean_zkvm(values: Vec<i32>, threshold: i32) -> Result<i32, JsError> {
-    check_mean_inputs(values.len(), threshold)?;
-    let module = parse_module(MEAN_WASM)?;
+pub async fn csv_zkvm(csv: String, col: i32, threshold: i32) -> Result<i32, JsError> {
+    check_csv_inputs(csv.len(), col, threshold)?;
+    let module = parse_module(CSV_WASM)?;
     let mut prover = prover_from(module.clone())?;
     let mut verifier = verifier_from(module.clone())?;
     let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
     let (rp, rv) = join(
-        mean_prover_inner(&mut prover, &mut ctx_p, &module, &values, threshold),
-        mean_verifier_inner(&mut verifier, &mut ctx_v, &module, values.len(), threshold),
+        csv_prover_inner(&mut prover, &mut ctx_p, &module, csv.as_bytes(), col, threshold),
+        csv_verifier_inner(&mut verifier, &mut ctx_v, &module, csv.len(), col, threshold),
     )
     .await;
     let (rp, rv) = (rp?, rv?);
