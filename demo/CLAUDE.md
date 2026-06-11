@@ -71,8 +71,15 @@ regex table and CSV column index rely on this.
 - Guest crates must NEVER be linked into `rust/` (mpz-vm-sys emits `vc.*`
   wasm imports nothing satisfies). Shared logic goes in a separate crate with
   no mpz-vm-sys dep — see `guests/regex-core`.
-- Feature flags: `web/src/config.ts`, URL overrides `?cheat=1&wat=1` —
-  tamper button and WAT editor (default off, undecided whether they ship).
+- Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
+  button (default off, undecided whether it ships). The WAT editor was
+  replaced by the "custom wasm" tab (default on): drop a compiled guest,
+  the prover worker inspects it (`module_exports`), the page builds one
+  input per argument with a private/public toggle, and the generic
+  `prover_custom`/`verifier_custom` entry points call any exported
+  function over i32/i64 scalars. The verifier request carries zeroed
+  private values. NOTE: never name a `#[wasm_bindgen]` parameter `wasm` —
+  the generated glue shadows its own `wasm` instance object.
   The relay-delay slider is always shown; the step-through-messages mode
   was dropped. The Run button morphs into Abort during a run (abort
   terminates and respawns both workers — the protocol can't be interrupted

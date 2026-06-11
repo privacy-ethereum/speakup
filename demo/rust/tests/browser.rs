@@ -6,8 +6,8 @@
 
 use wasm_bindgen_test::*;
 use zkvm_demo::{
-    age_zkvm, build_table, csv_zkvm, luhn_zkvm, prover_square, regex_zkvm, sha256_zkvm,
-    square_zkvm, verifier_square, wat_zkvm,
+    age_zkvm, build_table, csv_zkvm, custom_zkvm, guest_wasm, luhn_zkvm, module_exports,
+    prover_square, regex_zkvm, sha256_zkvm, square_zkvm, verifier_square,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -93,14 +93,17 @@ async fn regex_runs_in_browser() {
 }
 
 #[wasm_bindgen_test]
-async fn wat_runs_in_browser() {
-    // The custom-guest template: x*x over a private x, revealed.
-    let src = r#"(module
-  (import "vc" "reveal_i32" (func $reveal (param i32) (result i32)))
-  (import "vc" "reveal_i32_wait" (func $wait (param i32) (result i32)))
-  (func (export "compute") (param $x i32) (result i32)
-    (call $wait (call $reveal (i32.mul (local.get $x) (local.get $x))))))"#;
-    assert_eq!(wat_zkvm(src.into(), 7).await.unwrap(), 49);
+async fn custom_module_runs_in_browser() {
+    // The "drop your own .wasm" path, fed one of our own guests: square's
+    // compute(x) with x private.
+    let wasm = guest_wasm("square").unwrap();
+    let exports = module_exports(&wasm).unwrap();
+    assert!(
+        exports.contains(r#""name":"compute","params":["i32"],"results":["i32"],"supported":true"#),
+        "unexpected exports: {exports}"
+    );
+    let out = custom_zkvm(wasm, "compute".into(), vec![1], vec![6]).await.unwrap();
+    assert_eq!(out, "49");
 }
 
 #[wasm_bindgen_test]

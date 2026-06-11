@@ -23,7 +23,9 @@
 //! - `luhn`: a private card number passes the Luhn checksum.
 //! - `csv`: one column of a private CSV document, parsed inside the VM,
 //!   averages at least a public threshold.
-//! - `wat`: a custom guest compiled from (public) WebAssembly text.
+//! - custom: a user-supplied wasm module; any exported function over
+//!   i32/i64 scalars, each argument public or private per a (public)
+//!   visibility assignment.
 
 mod port_io;
 mod port_mux;
@@ -37,7 +39,7 @@ use futures::future::join;
 use mpz_common::{Context, context::test_st_context};
 use mpz_core::Block;
 use mpz_ot::{chou_orlandi, ferret, kos};
-use mpz_vm_core::{Param, Vm, Write, value::Value};
+use mpz_vm_core::{Param, ValType, Vm, Write, value::Value};
 use mpz_vm_ir::{ExportKind, Module};
 use mpz_vm_zk::{Prover, Verifier};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -577,47 +579,159 @@ pub async fn regex_zkvm(pattern: String, text: String) -> Result<i32, JsError> {
     Ok(rp)
 }
 
-// === custom guest (WAT) ===
+// === custom (user-supplied wasm module) ===
 
-/// Compiles WebAssembly text format to a zk-vm module. The source is public
-/// — both parties compile the same text, so they agree on the program.
-fn wat_module(source: &str) -> Result<Module, JsError> {
-    let bytes = wat::parse_str(source).map_err(|e| JsError::new(&format!("WAT: {e}")))?;
-    Module::parse(&bytes).map_err(err)
+/// The exported functions of a module, as JSON for the page to build the
+/// parameter UI:
+/// `[{"name":…,"params":["i32",…],"results":[…],"supported":bool}]`.
+/// `supported` means the zk-vm can call it from here: only i32/i64 scalars,
+/// at most one result.
+#[wasm_bindgen]
+pub fn module_exports(bytes: &[u8]) -> Result<String, JsError> {
+    let module = parse_module(bytes)?;
+    let ty_name = |t: &ValType| match t {
+        ValType::I32 => "i32",
+        ValType::I64 => "i64",
+        ValType::F32 => "f32",
+        ValType::F64 => "f64",
+    };
+    let scalar = |t: &ValType| matches!(t, ValType::I32 | ValType::I64);
+    let json_tys = |tys: &[ValType]| {
+        tys.iter()
+            .map(|t| format!("\"{}\"", ty_name(t)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let mut out = Vec::new();
+    for e in module.exports() {
+        let ExportKind::Func(idx) = e.kind else { continue };
+        let Some(f) = module.function(idx) else { continue };
+        let ty = f.func_type();
+        let supported =
+            ty.params.iter().all(scalar) && ty.results.iter().all(scalar) && ty.results.len() <= 1;
+        let name = e.name.replace('\\', "\\\\").replace('"', "\\\"");
+        out.push(format!(
+            r#"{{"name":"{name}","params":[{}],"results":[{}],"supported":{supported}}}"#,
+            json_tys(&ty.params),
+            json_tys(&ty.results),
+        ));
+    }
+    Ok(format!("[{}]", out.join(",")))
 }
 
-/// Prover side of a custom WAT guest: calls its exported `compute(x)` with
-/// `x` private, like the square program.
+/// Builds one party's params for a custom call. `vis[i]` is 1 where argument
+/// `i` is the prover's private input; `values[i]` is ignored at private
+/// positions on the verifier side. The visibility assignment itself is
+/// public — both parties receive the same `vis`.
+fn custom_params(
+    module: &Module,
+    func: u32,
+    vis: &[u8],
+    values: &[i64],
+    prover: bool,
+) -> Result<Vec<Param>, JsError> {
+    let f = module
+        .function(func)
+        .ok_or_else(|| JsError::new("function not found"))?;
+    let tys = &f.func_type().params;
+    if tys.len() != vis.len() || tys.len() != values.len() {
+        return Err(JsError::new(&format!(
+            "function takes {} arguments, got {}",
+            tys.len(),
+            values.len()
+        )));
+    }
+    tys.iter()
+        .zip(vis.iter().zip(values))
+        .map(|(ty, (&private, &raw))| {
+            let value = match ty {
+                ValType::I32 => Value::I32(
+                    i32::try_from(raw).map_err(|_| JsError::new("i32 argument out of range"))?,
+                ),
+                ValType::I64 => Value::I64(raw),
+                _ => return Err(JsError::new("float arguments are not supported")),
+            };
+            Ok(if private == 0 {
+                Param::Public(value)
+            } else if prover {
+                Param::Private(value)
+            } else {
+                Param::Blind(*ty)
+            })
+        })
+        .collect()
+}
+
+/// Renders a revealed result the same way on both sides.
+fn fmt_result(r: Option<Value>) -> Result<String, JsError> {
+    Ok(match r {
+        Some(Value::I32(x)) => x.to_string(),
+        Some(Value::I64(x)) => x.to_string(),
+        None => "()".into(),
+        other => Err(JsError::new(&format!("unexpected result: {other:?}")))?,
+    })
+}
+
+/// Prover side of a user-supplied module: calls `func_name` with the given
+/// arguments, those marked in `vis` staying private. Returns the revealed
+/// result as a string.
 #[wasm_bindgen]
-pub async fn prover_wat(port: MessagePort, source: String, x: i32) -> Result<i32, JsError> {
-    let module = wat_module(&source)?;
+pub async fn prover_custom(
+    port: MessagePort,
+    bytes: Vec<u8>,
+    func_name: String,
+    vis: Vec<u8>,
+    values: Vec<i64>,
+) -> Result<String, JsError> {
+    let module = parse_module(&bytes)?;
     let mut prover = prover_from(module.clone())?;
+    let f = func(&module, &func_name)?;
+    let params = custom_params(&module, f, &vis, &values, true)?;
     let mut ctx = port_ctx(port)?;
-    square_prover_inner(&mut prover, &mut ctx, &module, x).await
+    let r = prover.call(&mut ctx, f, params).await.map_err(err)?;
+    fmt_result(r)
 }
 
-/// Verifier side of a custom WAT guest.
+/// Verifier side of a user-supplied module. Sees the same module, function,
+/// visibility assignment, and public arguments — never the private values.
 #[wasm_bindgen]
-pub async fn verifier_wat(port: MessagePort, source: String) -> Result<i32, JsError> {
-    let module = wat_module(&source)?;
+pub async fn verifier_custom(
+    port: MessagePort,
+    bytes: Vec<u8>,
+    func_name: String,
+    vis: Vec<u8>,
+    values: Vec<i64>,
+) -> Result<String, JsError> {
+    let module = parse_module(&bytes)?;
     let mut verifier = verifier_from(module.clone())?;
+    let f = func(&module, &func_name)?;
+    let params = custom_params(&module, f, &vis, &values, false)?;
     let mut ctx = port_ctx(port)?;
-    square_verifier_inner(&mut verifier, &mut ctx, &module).await
+    let r = verifier.call(&mut ctx, f, params).await.map_err(err)?;
+    fmt_result(r)
 }
 
 /// Both parties in this instance (tests / reference).
 #[wasm_bindgen]
-pub async fn wat_zkvm(source: String, x: i32) -> Result<i32, JsError> {
-    let module = wat_module(&source)?;
+pub async fn custom_zkvm(
+    bytes: Vec<u8>,
+    func_name: String,
+    vis: Vec<u8>,
+    values: Vec<i64>,
+) -> Result<String, JsError> {
+    let module = parse_module(&bytes)?;
     let mut prover = prover_from(module.clone())?;
     let mut verifier = verifier_from(module.clone())?;
+    let f = func(&module, &func_name)?;
+    let params_p = custom_params(&module, f, &vis, &values, true)?;
+    let params_v = custom_params(&module, f, &vis, &values, false)?;
     let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
     let (rp, rv) = join(
-        square_prover_inner(&mut prover, &mut ctx_p, &module, x),
-        square_verifier_inner(&mut verifier, &mut ctx_v, &module),
+        async { prover.call(&mut ctx_p, f, params_p).await.map_err(err) },
+        async { verifier.call(&mut ctx_v, f, params_v).await.map_err(err) },
     )
     .await;
-    let (rp, rv) = (rp?, rv?);
+    let (rp, rv) = (fmt_result(rp?)?, fmt_result(rv?)?);
     if rp != rv {
         return Err(JsError::new("party results differ"));
     }

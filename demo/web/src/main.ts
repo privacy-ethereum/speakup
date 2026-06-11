@@ -1,6 +1,7 @@
 import { FEATURES } from "./config";
 import type {
   EmbeddedProgram,
+  ExportInfo,
   PartyRequest,
   PartyResponse,
   Role,
@@ -33,8 +34,12 @@ const textInput = $<HTMLInputElement>("text-input");
 const regexTextInput = $<HTMLInputElement>("regex-text-input");
 const patternRow = $("pattern-row");
 const patternInput = $<HTMLInputElement>("pattern-input");
-const watRow = $("wat-row");
-const watInput = $<HTMLTextAreaElement>("wat-input");
+const customRow = $("custom-row");
+const dropzone = $("dropzone");
+const wasmFileInput = $<HTMLInputElement>("wasm-file");
+const customConfig = $("custom-config");
+const funcSelect = $<HTMLSelectElement>("func-select");
+const paramRows = $("param-rows");
 const cardInput = $<HTMLInputElement>("card-input");
 const csvInput = $<HTMLTextAreaElement>("csv-input");
 const csvRow = $("csv-row");
@@ -72,7 +77,7 @@ type ProgramKey =
   | "regex"
   | "luhn"
   | "csv"
-  | "wat";
+  | "custom";
 
 /// Today as the packed YYYYMMDD integer the age guest expects.
 const todayPacked = () => {
@@ -86,12 +91,14 @@ const hatch = (n: number) => `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n
 interface Program {
   source: string;
   /// The real guest crate source, shown in the "view full source" modal.
-  /// Absent for `wat`, where the editor itself is the source.
+  /// Absent for `custom`, where there is no source to show.
   fullSource?: { title: string; code: string };
-  /// The embedded module to show wasm facts for. Absent for `wat`, whose
-  /// module is compiled from the editor text at run time.
+  /// The embedded module to show wasm facts for. Absent for `custom`,
+  /// whose facts come from the dropped file itself.
   module?: EmbeddedProgram;
-  input: HTMLInputElement | HTMLTextAreaElement;
+  /// Prover-pane private input element. Absent for `custom`, whose
+  /// arguments all live in the center panel.
+  input?: HTMLInputElement | HTMLTextAreaElement;
   inputLabel: string;
   /// Center-column public input row, if the program has one.
   centerRow?: HTMLElement;
@@ -354,29 +361,65 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the document (contents, row count, and sum)",
   },
-  wat: {
-    source: `// compiled from the WAT editor
-// (public — both parties compile
-// the same program)`,
-    input: xInput,
-    inputLabel: "private input x",
-    centerRow: watRow,
+  custom: {
+    source: `// drop a compiled guest module
+// to inspect its exports`,
+    inputLabel: "private input",
+    centerRow: customRow,
     requests() {
-      const x = Number(xInput.value);
-      if (!Number.isInteger(x)) return "x must be an integer";
-      const source = watInput.value;
-      if (!source.trim()) return "write a guest program";
+      if (!customWasm) return "drop a .wasm guest first";
+      const exp = selectedExport();
+      if (!exp || !exp.supported) return "pick a supported function";
+      const n = exp.params.length;
+      const vis = new Uint8Array(n);
+      const values = new BigInt64Array(n);
+      const blindValues = new BigInt64Array(n);
+      for (let i = 0; i < n; i++) {
+        let v: bigint;
+        try {
+          v = BigInt(paramValue(i).value.trim());
+        } catch {
+          return `arg${i} must be an integer`;
+        }
+        const lim = exp.params[i] === "i32" ? 31n : 63n;
+        if (v < -(2n ** lim) || v >= 2n ** lim) {
+          return `arg${i} is out of ${exp.params[i]} range`;
+        }
+        const priv = paramPrivate(i).checked;
+        vis[i] = priv ? 1 : 0;
+        values[i] = v;
+        blindValues[i] = priv ? 0n : v; // the verifier never sees private values
+      }
+      const base = {
+        type: "run" as const,
+        program: "custom" as const,
+        wasm: customWasm.bytes,
+        func: exp.name,
+        vis,
+      };
       return {
-        prover: { type: "run", role: "prover", program: "wat", source, x },
-        verifier: { type: "run", role: "verifier", program: "wat", source, x: 0 },
+        prover: { ...base, role: "prover" as const, values },
+        verifier: { ...base, role: "verifier" as const, values: blindValues },
       };
     },
-    blind: () => "░░░░░░░░",
-    proverStage: () => `staging private input x = ${xInput.value}`,
+    blind() {
+      const exp = selectedExport();
+      if (!customWasm || !exp) return "—";
+      return exp.params
+        .map((ty, i) =>
+          paramPrivate(i).checked ? `░░░░ (${ty})` : `${paramValue(i).value} (public)`,
+        )
+        .join(" · ");
+    },
+    proverStage() {
+      const exp = selectedExport();
+      const n = exp ? exp.params.filter((_, i) => paramPrivate(i).checked).length : 0;
+      return `staging ${n} private argument${n === 1 ? "" : "s"}`;
+    },
     render(result) {
       return { text: result, cls: "", log: `result: ${result}` };
     },
-    secretName: "x",
+    secretName: "the private input",
   },
 };
 
@@ -416,10 +459,12 @@ const selectProgram = (key: ProgramKey) => {
     btn.classList.toggle("active", btn.dataset.program === key);
   }
   for (const other of Object.values(PROGRAMS)) {
-    other.input.hidden = true;
+    if (other.input) other.input.hidden = true;
     if (other.centerRow) other.centerRow.hidden = true;
   }
-  p.input.hidden = false;
+  if (p.input) p.input.hidden = false;
+  // No prover-pane input for custom: its arguments live in the center panel.
+  (inputLabel.parentElement as HTMLElement).hidden = !p.input;
   shaPresets.hidden = key !== "sha256";
   if (p.centerRow) p.centerRow.hidden = false;
   inputLabel.textContent = p.inputLabel;
@@ -427,6 +472,10 @@ const selectProgram = (key: ProgramKey) => {
   verifierSource.textContent = p.source;
   for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
   requestGuestInfo(p);
+  if (key === "custom" && customInfoLine) {
+    proverWasmInfo.textContent = customInfoLine;
+    verifierWasmInfo.textContent = customInfoLine;
+  }
   blindCell.textContent = p.blind();
   resultBox.hidden = true;
   clearLogs();
@@ -446,6 +495,132 @@ shaPresets.addEventListener("click", (ev) => {
   textInput.value = "speakup demo data ".repeat(Math.ceil(size / 18)).slice(0, size);
   blindCell.textContent = PROGRAMS.sha256.blind();
 });
+
+// --- custom module (dropped .wasm) ---
+
+const CUSTOM_WASM_CAP = 1 << 20; // 1 MB — guests are tens of KB
+
+let customWasm: { name: string; bytes: Uint8Array } | null = null;
+let customExports: ExportInfo[] = [];
+/// The wasm-info line for the loaded file, restored when re-entering the tab.
+let customInfoLine = "";
+
+const selectedExport = () => customExports.find((e) => e.name === funcSelect.value);
+const paramValue = (i: number) => $<HTMLInputElement>(`param-value-${i}`);
+const paramPrivate = (i: number) => $<HTMLInputElement>(`param-priv-${i}`);
+
+const fmtSig = (e: ExportInfo) =>
+  `${e.name}(${e.params.join(", ")})${e.results.length ? ` -> ${e.results.join(", ")}` : ""}`;
+
+/// One row per argument of the selected function: a value input and a
+/// private toggle. The first argument defaults to private.
+const buildParamRows = () => {
+  paramRows.replaceChildren();
+  const exp = selectedExport();
+  if (!exp) return;
+  exp.params.forEach((ty, i) => {
+    const row = document.createElement("div");
+    row.className = "param-row";
+    const name = document.createElement("span");
+    name.className = "param-name";
+    name.textContent = `arg${i} (${ty})`;
+    const value = document.createElement("input");
+    value.type = "text";
+    value.inputMode = "numeric";
+    value.value = "0";
+    value.id = `param-value-${i}`;
+    value.addEventListener("input", () => {
+      blindCell.textContent = PROGRAMS.custom.blind();
+    });
+    const privLabel = document.createElement("label");
+    privLabel.className = "param-priv";
+    const priv = document.createElement("input");
+    priv.type = "checkbox";
+    priv.checked = i === 0;
+    priv.id = `param-priv-${i}`;
+    priv.addEventListener("change", () => {
+      blindCell.textContent = PROGRAMS.custom.blind();
+    });
+    privLabel.append(priv, " private");
+    row.append(name, value, privLabel);
+    paramRows.append(row);
+  });
+  blindCell.textContent = PROGRAMS.custom.blind();
+};
+
+/// The prover worker's answer to an `inspect` request.
+const onExports = (msg: { exports?: ExportInfo[]; error?: string }) => {
+  if (!customWasm) return;
+  if (msg.error || !msg.exports) {
+    const reason = (msg.error ?? "no exports").replace(/\s+/g, " ");
+    dropzone.textContent = `not a valid Speakup guest: ${
+      reason.length > 90 ? `${reason.slice(0, 90)}…` : reason
+    }`;
+    customWasm = null;
+    customInfoLine = "";
+    return;
+  }
+  customExports = msg.exports;
+  const supported = customExports.filter((e) => e.supported);
+  funcSelect.replaceChildren();
+  for (const e of customExports) {
+    const opt = document.createElement("option");
+    opt.value = e.name;
+    opt.textContent = fmtSig(e) + (e.supported ? "" : " — unsupported");
+    opt.disabled = !e.supported;
+    funcSelect.append(opt);
+  }
+  if (!supported.length) {
+    dropzone.textContent = `${customWasm.name}: no callable exports (i32/i64 scalars only)`;
+    return;
+  }
+  funcSelect.value = supported[0].name;
+  buildParamRows();
+  customConfig.hidden = false;
+  dropzone.textContent = `${customWasm.name} · ${fmtBytes(customWasm.bytes.length)} ✓ — drop another to replace`;
+  const src = supported.map((e) => `fn ${fmtSig(e)}`).join("\n");
+  proverSource.textContent = src;
+  verifierSource.textContent = src;
+};
+
+const loadWasmFile = async (file: File) => {
+  if (file.size > CUSTOM_WASM_CAP) {
+    dropzone.textContent = `${file.name} is too big (max ${fmtBytes(CUSTOM_WASM_CAP)})`;
+    return;
+  }
+  const buffer = await file.arrayBuffer();
+  customWasm = { name: file.name, bytes: new Uint8Array(buffer) };
+  customExports = [];
+  customConfig.hidden = true;
+  dropzone.textContent = `${file.name} · ${fmtBytes(file.size)} — inspecting…`;
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  const sha256 = [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  customInfoLine = `wasm ${fmtBytes(file.size)} · sha-256 ${sha256.slice(0, 8)}…`;
+  proverWasmInfo.textContent = customInfoLine;
+  verifierWasmInfo.textContent = customInfoLine;
+  workers.prover.postMessage({ type: "inspect", wasm: customWasm.bytes } satisfies PartyRequest);
+};
+
+dropzone.addEventListener("click", () => wasmFileInput.click());
+dropzone.addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  dropzone.classList.add("drag");
+});
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  dropzone.classList.remove("drag");
+  const file = ev.dataTransfer?.files[0];
+  if (file) void loadWasmFile(file);
+});
+wasmFileInput.addEventListener("change", () => {
+  const file = wasmFileInput.files?.[0];
+  if (file) void loadWasmFile(file);
+  wasmFileInput.value = "";
+});
+funcSelect.addEventListener("change", buildParamRows);
 
 // --- full-source modal ---
 
@@ -471,7 +646,6 @@ document.addEventListener("keydown", (ev) => {
 
 // --- feature flags ---
 
-$("wat-tab").hidden = !FEATURES.watEditor;
 cheatBtn.hidden = !FEATURES.cheat;
 
 delaySlider.addEventListener("input", () => {
@@ -659,6 +833,9 @@ const spawnWorker = (role: Role) => {
           `wasm ${fmtBytes(msg.size)} · sha-256 ${msg.sha256.slice(0, 8)}…`;
         (role === "prover" ? proverWasmInfo : verifierWasmInfo).title =
           `sha-256 ${msg.sha256}`;
+        break;
+      case "exports":
+        onExports(msg);
         break;
     }
   };

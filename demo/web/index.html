@@ -20,7 +20,7 @@
         <button data-program="regex">regex</button>
         <button data-program="luhn">credit card</button>
         <button data-program="csv">csv average</button>
-        <button data-program="wat" id="wat-tab" hidden>custom (wat)</button>
+        <button data-program="custom">custom wasm</button>
       </nav>
     </header>
 
@@ -71,18 +71,19 @@
             <label>threshold <input id="threshold-input" type="number" value="60000" min="0" max="99999" /></label>
           </div>
         </div>
-        <div class="memory center-input" id="wat-row" hidden>
-          <div class="label">custom guest — public, both parties compile it</div>
-          <textarea id="wat-input" rows="10" spellcheck="false">(module
-  (import "vc" "reveal_i32" (func $reveal (param i32) (result i32)))
-  (import "vc" "reveal_i32_wait" (func $wait (param i32) (result i32)))
-
-  ;; computes over the prover's private x; only the
-  ;; value passed to reveal becomes public
-  (func (export "compute") (param $x i32) (result i32)
-    (call $wait
-      (call $reveal
-        (i32.mul (local.get $x) (local.get $x))))))</textarea>
+        <div class="memory center-input" id="custom-row" hidden>
+          <div class="label">custom guest — public, both parties run the same module</div>
+          <div class="dropzone" id="dropzone" tabindex="0">
+            drop a .wasm guest here — or click to browse<br />
+            <span class="dropzone-hint">built with mpz-vm-sys; i32/i64 arguments only</span>
+          </div>
+          <input id="wasm-file" type="file" accept=".wasm,application/wasm" hidden />
+          <div id="custom-config" hidden>
+            <label class="control-row">function
+              <select id="func-select"></select>
+            </label>
+            <div id="param-rows"></div>
+          </div>
         </div>
 
         <button id="run">Run in zero-knowledge</button>

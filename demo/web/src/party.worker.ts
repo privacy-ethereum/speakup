@@ -6,25 +6,26 @@
 
 import init, {
   guest_wasm,
+  module_exports,
   prover_age,
+  prover_custom,
   prover_luhn,
   prover_csv,
   prover_regex,
   prover_sha256,
   prover_square,
-  prover_wat,
   verifier_age,
+  verifier_custom,
   verifier_luhn,
   verifier_csv,
   verifier_regex,
   verifier_sha256,
   verifier_square,
-  verifier_wat,
 } from "./pkg/zkvm_demo.js";
 
 export type Role = "prover" | "verifier";
 
-/// Programs with a fixed, embedded guest module (everything but `wat`).
+/// Programs with a fixed, embedded guest module (everything but `custom`).
 export type EmbeddedProgram =
   | "square"
   | "age"
@@ -35,6 +36,16 @@ export type EmbeddedProgram =
 
 export type PartyRequest =
   | { type: "guest_info"; program: EmbeddedProgram }
+  | { type: "inspect"; wasm: Uint8Array }
+  | {
+      type: "run";
+      role: Role;
+      program: "custom";
+      wasm: Uint8Array;
+      func: string;
+      vis: Uint8Array; // 1 where the argument is the prover's private input
+      values: BigInt64Array; // ignored at private positions on the verifier
+    }
   | { type: "run"; role: Role; program: "square"; x: number }
   | { type: "run"; role: Role; program: "age"; birthdate: string; today: number }
   | {
@@ -52,7 +63,6 @@ export type PartyRequest =
       text: string; // empty on the verifier side
       textLen: number;
     }
-  | { type: "run"; role: Role; program: "wat"; source: string; x: number }
   | {
       type: "run";
       role: Role;
@@ -70,11 +80,20 @@ export type PartyRequest =
       threshold: number;
     };
 
+/// One exported function of an inspected module.
+export interface ExportInfo {
+  name: string;
+  params: string[]; // "i32" | "i64" | "f32" | "f64"
+  results: string[];
+  supported: boolean;
+}
+
 export type PartyResponse =
   | { type: "ready" }
   | { type: "done"; result: string; ms: number }
   | { type: "error"; message: string }
-  | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string };
+  | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string }
+  | { type: "exports"; exports?: ExportInfo[]; error?: string };
 
 const post = (msg: PartyResponse) => self.postMessage(msg);
 
@@ -93,6 +112,19 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
     post({ type: "guest_info", program: msg.program, size: bytes.length, sha256 });
+    return;
+  }
+  if (msg.type === "inspect") {
+    // Parse the user's module and report its exported functions, so the
+    // page can build the argument UI from the real signatures.
+    try {
+      post({ type: "exports", exports: JSON.parse(module_exports(msg.wasm)) });
+    } catch (e) {
+      post({
+        type: "exports",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
     return;
   }
   if (msg.type !== "run") return;
@@ -132,12 +164,11 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
             : await verifier_regex(port, msg.pattern, msg.textLen),
         );
         break;
-      case "wat":
-        result = String(
+      case "custom":
+        result =
           msg.role === "prover"
-            ? await prover_wat(port, msg.source, msg.x)
-            : await verifier_wat(port, msg.source),
-        );
+            ? await prover_custom(port, msg.wasm, msg.func, msg.vis, msg.values)
+            : await verifier_custom(port, msg.wasm, msg.func, msg.vis, msg.values);
         break;
       case "luhn":
         result = String(

@@ -19,7 +19,6 @@ mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 regex-automata = "0.4"
-wat = "1"
 
 futures = "0.3"
 rand = "0.9"

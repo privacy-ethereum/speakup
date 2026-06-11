@@ -276,6 +276,66 @@ main {
 .control-row { display: flex; align-items: center; gap: 0.5rem; }
 .control-row input[type="range"] { flex: 1; }
 
+.dropzone {
+  padding: 1.1rem 0.8rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: #11151c;
+  border: 1px dashed var(--panel-edge);
+  border-radius: 6px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.dropzone.drag,
+.dropzone:hover { border-color: var(--accent); color: var(--text); }
+.dropzone-hint { font-size: 0.72rem; }
+
+#custom-config {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+#func-select {
+  flex: 1;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: #11151c;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+}
+.param-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.param-name { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+.param-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  background: #11151c;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+}
+.param-priv {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--prover);
+  white-space: nowrap;
+}
+
 .presets {
   margin-top: 0.5rem;
   display: flex;
