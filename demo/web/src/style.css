@@ -155,7 +155,7 @@ main {
   animation: pulse 1s ease-in-out infinite;
 }
 @keyframes pulse { 50% { opacity: 0.35; } }
-.channel-status { font-size: 0.8rem; color: var(--muted); }
+.channel-status { font-size: 0.8rem; color: var(--muted); white-space: pre-line; }
 
 .result-box { text-align: center; }
 .result {

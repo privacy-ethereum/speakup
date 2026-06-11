@@ -521,7 +521,7 @@ const finishRun = () => {
   const elapsed = performance.now() - run.start;
   const traffic = fmtTraffic(run);
   if (prover !== undefined && verifier !== undefined && prover === verifier) {
-    channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms — ${traffic}`;
+    channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms\n${traffic}`;
     const r = p.render(prover);
     resultEl.textContent = r.text;
     resultEl.className = `result ${r.cls}`;
@@ -607,7 +607,7 @@ runBtn.addEventListener("click", () => {
     tamper: cheatArmed,
     ticker: window.setInterval(() => {
       if (run === state) {
-        channelStatus.textContent = `exchanging… ${fmtTraffic(state)}`;
+        channelStatus.textContent = `exchanging…\n${fmtTraffic(state)}`;
       }
     }, 100),
   };
