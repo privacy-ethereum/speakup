@@ -87,13 +87,13 @@ regex table and CSV column index rely on this.
 
 ## Status / open items
 
-- Repo: github.com/tlsnotary/speakup-demo (private).
-- GitHub Pages deploy deferred: org has no paid plan, so Pages can't serve a
-  private repo. Vite base `/speakup-demo/` is configured and the production
-  build is verified; revisit when the repo goes public (or use
-  Cloudflare/Netlify for private repos).
+- Repo: github.com/tlsnotary/speakup-demo (public).
+- GitHub Pages: `.github/workflows/deploy.yml` builds the wasm pkg + vite
+  site on every push to main and deploys via actions/deploy-pages. Repo
+  settings → Pages → source must be "GitHub Actions". Vite base is
+  `/speakup-demo/`.
 - Perf anchors (Chrome, M-series): square ≈ 0.4 s / 21 msgs / ~900 KB;
   sha-256 16 KB ≈ 10.7 s / 3.1 MB; regex email ≈ 1.6 s; csv 4 rows ≈ 1.6 s.
-- Possible next: guided stepper narrative, deploy, more polish; Speakup RAM
+- Possible next: guided stepper narrative, more polish; Speakup RAM
   support will eventually allow private-offset designs (see mpz age-span
   discussion) and may relax the black_box discipline if `select` lands.
