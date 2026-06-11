@@ -521,7 +521,8 @@ const finishRun = () => {
   const elapsed = performance.now() - run.start;
   const traffic = fmtTraffic(run);
   if (prover !== undefined && verifier !== undefined && prover === verifier) {
-    channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms\n${traffic}`;
+    const delayed = Number(delaySlider.value) > 0 ? " (with simulated latency)" : "";
+    channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms${delayed}\n${traffic}`;
     const r = p.render(prover);
     resultEl.textContent = r.text;
     resultEl.className = `result ${r.cls}`;
