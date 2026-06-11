@@ -141,6 +141,7 @@ main {
   cursor: pointer;
 }
 #run:disabled { opacity: 0.5; cursor: wait; }
+#run.abort { background: var(--err); color: var(--text); }
 
 .channel { width: 100%; text-align: center; }
 .channel-line {

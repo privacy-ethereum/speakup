@@ -3,15 +3,9 @@ import type { PartyRequest, PartyResponse, Role } from "./party.worker";
 import "./style.css";
 
 // One worker per party: two isolated wasm memories. The prover's secrets
-// physically cannot be in the verifier's address space.
-const workers: Record<Role, Worker> = {
-  prover: new Worker(new URL("./party.worker.ts", import.meta.url), {
-    type: "module",
-  }),
-  verifier: new Worker(new URL("./party.worker.ts", import.meta.url), {
-    type: "module",
-  }),
-};
+// physically cannot be in the verifier's address space. Spawned (and on
+// abort, re-spawned) by `spawnWorker` below.
+const workers = {} as Record<Role, Worker>;
 
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -41,7 +35,6 @@ const channel = $("channel");
 const channelStatus = $("channel-status");
 const resultBox = $("result-box");
 const resultEl = $("result");
-const slowControls = $("slow-controls");
 const delaySlider = $<HTMLInputElement>("delay-slider");
 const delayValue = $("delay-value");
 const cheatBtn = $<HTMLButtonElement>("cheat");
@@ -398,7 +391,6 @@ shaPresets.addEventListener("click", (ev) => {
 // --- feature flags ---
 
 $("wat-tab").hidden = !FEATURES.watEditor;
-slowControls.hidden = !FEATURES.slowMotion;
 cheatBtn.hidden = !FEATURES.cheat;
 
 delaySlider.addEventListener("input", () => {
@@ -434,15 +426,19 @@ const markReady = () => {
 /// early enough that every program reaches it.
 const TAMPER_AT = 10;
 
+/// Message direction; the arrows match the panes' layout (prover left,
+/// verifier right).
+type Dir = "prover→verifier" | "verifier→prover";
+
 interface QueuedMsg {
   data: ArrayBuffer;
   to: MessagePort;
-  dir: string;
+  dir: Dir;
 }
 
 interface RunState {
   msgs: number;
-  bytes: number;
+  bytes: Record<Dir, number>;
   start: number;
   results: Partial<Record<Role, string>>;
   ticker: number;
@@ -452,10 +448,13 @@ interface RunState {
 }
 let run: RunState | null = null;
 
+const fmtTraffic = (s: RunState) =>
+  `${s.msgs} msgs · →${fmtBytes(s.bytes["prover→verifier"])} · ←${fmtBytes(s.bytes["verifier→prover"])}`;
+
 /// Forwards one queued message, tampering if this run is the cheating one.
 const forward = (state: RunState, item: QueuedMsg) => {
   state.msgs += 1;
-  state.bytes += item.data.byteLength;
+  state.bytes[item.dir] += item.data.byteLength;
   if (state.tamper && state.msgs === TAMPER_AT) {
     const view = new Uint8Array(item.data);
     view[Math.min(8, view.length - 1)] ^= 0x01;
@@ -477,11 +476,17 @@ const pump = (state: RunState) => {
       return;
     }
     forward(state, item);
-    const delay = FEATURES.slowMotion ? Number(delaySlider.value) : 0;
+    const delay = Number(delaySlider.value);
     if (delay > 0) setTimeout(step, delay);
     else queueMicrotask(step);
   };
   step();
+};
+
+/// The run button doubles as the abort button while a run is active.
+const setRunButton = (running: boolean) => {
+  runBtn.textContent = running ? "Abort" : "Run in zero-knowledge";
+  runBtn.classList.toggle("abort", running);
 };
 
 const endRun = () => {
@@ -489,8 +494,24 @@ const endRun = () => {
   clearInterval(run.ticker);
   channel.classList.remove("active");
   run = null;
-  runBtn.disabled = false;
+  setRunButton(false);
   if (cheatArmed) cheatBtn.click(); // disarm after one use
+};
+
+/// The protocol can't be interrupted mid-computation: kill both workers and
+/// spawn fresh ones (they hold no state between runs).
+const abortRun = () => {
+  if (!run) return;
+  endRun();
+  for (const role of ["prover", "verifier"] as const) {
+    workers[role].terminate();
+    spawnWorker(role);
+  }
+  readyCount = 0;
+  runBtn.disabled = true;
+  channelStatus.textContent = "aborted — reloading wasm…";
+  log(proverLog, "run aborted", "warn");
+  log(verifierLog, "run aborted", "warn");
 };
 
 const finishRun = () => {
@@ -498,7 +519,7 @@ const finishRun = () => {
   const p = PROGRAMS[current];
   const { prover, verifier } = run.results;
   const elapsed = performance.now() - run.start;
-  const traffic = `${run.msgs} msgs · ${fmtBytes(run.bytes)}`;
+  const traffic = fmtTraffic(run);
   if (prover !== undefined && verifier !== undefined && prover === verifier) {
     channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms — ${traffic}`;
     const r = p.render(prover);
@@ -523,8 +544,11 @@ const failRun = (role: Role, message: string) => {
   endRun();
 };
 
-for (const role of ["prover", "verifier"] as const) {
-  workers[role].onmessage = (ev: MessageEvent<PartyResponse>) => {
+const spawnWorker = (role: Role) => {
+  const worker = new Worker(new URL("./party.worker.ts", import.meta.url), {
+    type: "module",
+  });
+  worker.onmessage = (ev: MessageEvent<PartyResponse>) => {
     const msg = ev.data;
     switch (msg.type) {
       case "ready":
@@ -546,30 +570,36 @@ for (const role of ["prover", "verifier"] as const) {
         break;
     }
   };
-}
+  workers[role] = worker;
+};
+
+for (const role of ["prover", "verifier"] as const) spawnWorker(role);
 
 runBtn.addEventListener("click", () => {
-  if (run) return;
+  if (run) {
+    abortRun();
+    return;
+  }
   const p = PROGRAMS[current];
   const reqs = p.requests();
   if (typeof reqs === "string") {
     log(proverLog, reqs, "err");
     return;
   }
-  runBtn.disabled = true;
+  setRunButton(true);
   resultBox.hidden = true;
   clearLogs();
   blindCell.textContent = p.blind();
   channel.classList.add("active");
 
   // A fresh channel pair per run; the page relays prover <-> verifier
-  // through a queue, counting (and optionally delaying, stepping, or
-  // tampering with) the traffic as it passes through.
+  // through a queue, counting (and optionally delaying or tampering with)
+  // the traffic as it passes through.
   const toProver = new MessageChannel();
   const toVerifier = new MessageChannel();
   const state: RunState = {
     msgs: 0,
-    bytes: 0,
+    bytes: { "prover→verifier": 0, "verifier→prover": 0 },
     start: performance.now(),
     results: {},
     queue: [],
@@ -577,13 +607,13 @@ runBtn.addEventListener("click", () => {
     tamper: cheatArmed,
     ticker: window.setInterval(() => {
       if (run === state) {
-        channelStatus.textContent = `exchanging… ${state.msgs} msgs · ${fmtBytes(state.bytes)}`;
+        channelStatus.textContent = `exchanging… ${fmtTraffic(state)}`;
       }
     }, 100),
   };
   run = state;
 
-  const relay = (from: MessagePort, to: MessagePort, dir: string) => {
+  const relay = (from: MessagePort, to: MessagePort, dir: Dir) => {
     from.onmessage = (ev) => {
       state.queue.push({ data: ev.data as ArrayBuffer, to, dir });
       pump(state);
