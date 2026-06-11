@@ -17,7 +17,13 @@
 //! - `square`: `(x + 1)²` over a private `x`.
 //! - `age`: the prover's `"YYYY-MM-DD"` birth date stays private; only the
 //!   0/1 "18 or older as of today" flag is revealed.
-//! - `sha256`: SHA-256 of a private message; only the digest is revealed.
+//! - `sha256`: SHA-256 of a private message (up to 128 KB); only the digest
+//!   is revealed.
+//! - `regex`: a private string matches a public pattern (oblivious DFA).
+//! - `luhn`: a private card number passes the Luhn checksum.
+//! - `csv`: one column of a private CSV document, parsed inside the VM,
+//!   averages at least a public threshold.
+//! - `wat`: a custom guest compiled from (public) WebAssembly text.
 
 mod port_io;
 mod regex_table;
