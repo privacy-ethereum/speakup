@@ -30,6 +30,10 @@
         <div class="program-box">
           <div class="label">program</div>
           <pre><code id="prover-source"></code></pre>
+          <div class="program-meta">
+            <span class="wasm-info" id="prover-wasm-info"></span>
+            <button class="link-btn" id="prover-full-source" hidden>view full source</button>
+          </div>
         </div>
         <div class="memory">
           <div class="label" id="input-label">private input</div>
@@ -43,7 +47,7 @@
             <button data-size="16384">16 KB</button>
             <button data-size="65536">64 KB</button>
             <button data-size="131072">128 KB</button>
-            <span class="presets-hint">proving scales with size: 16 KB ≈ 10 s</span>
+            <span class="presets-hint">proving time scales with input size</span>
           </div>
           <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
           <input id="card-input" type="text" value="4539 1488 0343 6467" maxlength="30" hidden />
@@ -116,6 +120,10 @@
         <div class="program-box">
           <div class="label">program (same module, same hash)</div>
           <pre><code id="verifier-source"></code></pre>
+          <div class="program-meta">
+            <span class="wasm-info" id="verifier-wasm-info"></span>
+            <button class="link-btn" id="verifier-full-source" hidden>view full source</button>
+          </div>
         </div>
         <div class="memory">
           <div class="label">prover's input, as the verifier sees it</div>
@@ -124,6 +132,16 @@
         <div class="log" id="verifier-log" aria-live="polite"></div>
       </section>
     </main>
+
+    <div class="modal-backdrop" id="source-modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Guest source code">
+        <div class="modal-head">
+          <span class="modal-title" id="source-modal-title"></span>
+          <button class="link-btn" id="source-modal-close">close ✕</button>
+        </div>
+        <pre class="modal-code"><code id="source-modal-code"></code></pre>
+      </div>
+    </div>
 
     <footer>
       Built on <a href="https://github.com/privacy-ethereum/mpz">mpz</a> —

@@ -1,6 +1,21 @@
 import { FEATURES } from "./config";
-import type { PartyRequest, PartyResponse, Role } from "./party.worker";
+import type {
+  EmbeddedProgram,
+  PartyRequest,
+  PartyResponse,
+  Role,
+} from "./party.worker";
 import "./style.css";
+
+// The real guest sources, embedded verbatim for the "view full source"
+// modal — the same files build.rs compiles into the modules both parties run.
+import squareSrc from "../../guests/square/src/lib.rs?raw";
+import ageSrc from "../../guests/age/src/lib.rs?raw";
+import sha256Src from "../../guests/sha256/src/lib.rs?raw";
+import regexSrc from "../../guests/regex/src/lib.rs?raw";
+import regexCoreSrc from "../../guests/regex-core/src/lib.rs?raw";
+import luhnSrc from "../../guests/luhn/src/lib.rs?raw";
+import csvSrc from "../../guests/csv/src/lib.rs?raw";
 
 // One worker per party: two isolated wasm memories. The prover's secrets
 // physically cannot be in the verifier's address space. Spawned (and on
@@ -39,6 +54,16 @@ const delaySlider = $<HTMLInputElement>("delay-slider");
 const delayValue = $("delay-value");
 const cheatBtn = $<HTMLButtonElement>("cheat");
 const shaPresets = $("sha-presets");
+const proverWasmInfo = $("prover-wasm-info");
+const verifierWasmInfo = $("verifier-wasm-info");
+const fullSourceBtns = [
+  $<HTMLButtonElement>("prover-full-source"),
+  $<HTMLButtonElement>("verifier-full-source"),
+];
+const sourceModal = $("source-modal");
+const sourceModalTitle = $("source-modal-title");
+const sourceModalCode = $("source-modal-code");
+const sourceModalClose = $<HTMLButtonElement>("source-modal-close");
 
 type ProgramKey =
   | "square"
@@ -60,6 +85,12 @@ const hatch = (n: number) => `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n
 
 interface Program {
   source: string;
+  /// The real guest crate source, shown in the "view full source" modal.
+  /// Absent for `wat`, where the editor itself is the source.
+  fullSource?: { title: string; code: string };
+  /// The embedded module to show wasm facts for. Absent for `wat`, whose
+  /// module is compiled from the editor text at run time.
+  module?: EmbeddedProgram;
   input: HTMLInputElement | HTMLTextAreaElement;
   inputLabel: string;
   /// Center-column public input row, if the program has one.
@@ -79,6 +110,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     source: `fn compute(x: i32) -> i32 {
     reveal((x + 1) * (x + 1))
 }`,
+    fullSource: { title: "guests/square/src/lib.rs", code: squareSrc },
+    module: "square",
     input: xInput,
     inputLabel: "private input x",
     requests() {
@@ -101,6 +134,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     let date = load_birthdate(); // private
     reveal(age_flag(&date, today))
 }`,
+    fullSource: { title: "guests/age/src/lib.rs", code: ageSrc },
+    module: "age",
     input: dateInput,
     inputLabel: "private birth date",
     requests() {
@@ -136,6 +171,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     source: `fn hash(msg: &[u8]) -> [u8; 32] {
     reveal_bytes(sha256(msg)) // digest only
 }`,
+    fullSource: { title: "guests/sha256/src/lib.rs", code: sha256Src },
+    module: "sha256",
     input: textInput,
     inputLabel: "private message",
     requests() {
@@ -177,6 +214,11 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     // private text — branch-free
     reveal(dfa_matches(&TABLE, text))
 }`,
+    fullSource: {
+      title: "guests/regex/src/lib.rs (+ regex-core)",
+      code: `${regexSrc}\n// ───── guests/regex-core/src/lib.rs ─────\n\n${regexCoreSrc}`,
+    },
+    module: "regex",
     input: regexTextInput,
     inputLabel: "private test string",
     centerRow: patternRow,
@@ -218,6 +260,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     // digits, branch-free
     reveal(luhn_valid(&NUMBER[..len]))
 }`,
+    fullSource: { title: "guests/luhn/src/lib.rs", code: luhnSrc },
+    module: "luhn",
     input: cardInput,
     inputLabel: "private card number",
     requests() {
@@ -260,6 +304,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     // sums column \`col\` — branch-free
     reveal(parse_and_compare(len, col, t))
 }`,
+    fullSource: { title: "guests/csv/src/lib.rs", code: csvSrc },
+    module: "csv",
     input: csvInput,
     inputLabel: "private CSV document",
     centerRow: csvRow,
@@ -352,6 +398,17 @@ const clearLogs = () => {
 const fmtBytes = (n: number) =>
   n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
 
+/// Asks both parties for facts about their embedded module; each pane shows
+/// its own party's answer when it arrives (see the `guest_info` case below).
+const requestGuestInfo = (p: Program) => {
+  proverWasmInfo.textContent = "";
+  verifierWasmInfo.textContent = "";
+  if (!p.module) return;
+  const req: PartyRequest = { type: "guest_info", program: p.module };
+  workers.prover.postMessage(req);
+  workers.verifier.postMessage(req);
+};
+
 const selectProgram = (key: ProgramKey) => {
   current = key;
   const p = PROGRAMS[key];
@@ -368,6 +425,8 @@ const selectProgram = (key: ProgramKey) => {
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
   verifierSource.textContent = p.source;
+  for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
+  requestGuestInfo(p);
   blindCell.textContent = p.blind();
   resultBox.hidden = true;
   clearLogs();
@@ -386,6 +445,28 @@ shaPresets.addEventListener("click", (ev) => {
   const size = Number(btn.dataset.size);
   textInput.value = "speakup demo data ".repeat(Math.ceil(size / 18)).slice(0, size);
   blindCell.textContent = PROGRAMS.sha256.blind();
+});
+
+// --- full-source modal ---
+
+for (const btn of fullSourceBtns) {
+  btn.addEventListener("click", () => {
+    const f = PROGRAMS[current].fullSource;
+    if (!f) return;
+    sourceModalTitle.textContent = f.title;
+    sourceModalCode.textContent = f.code;
+    sourceModal.hidden = false;
+  });
+}
+const closeSourceModal = () => {
+  sourceModal.hidden = true;
+};
+sourceModalClose.addEventListener("click", closeSourceModal);
+sourceModal.addEventListener("click", (ev) => {
+  if (ev.target === sourceModal) closeSourceModal();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeSourceModal();
 });
 
 // --- feature flags ---
@@ -417,6 +498,9 @@ const markReady = () => {
   if (readyCount === 2) {
     runBtn.disabled = false;
     channelStatus.textContent = "idle";
+    // Freshly spawned workers (initial load or post-abort) haven't been
+    // asked about the current module yet.
+    requestGuestInfo(PROGRAMS[current]);
   }
 };
 
@@ -568,6 +652,13 @@ const spawnWorker = (role: Role) => {
         break;
       case "error":
         failRun(role, msg.message);
+        break;
+      case "guest_info":
+        if (msg.program !== PROGRAMS[current].module) return; // stale
+        (role === "prover" ? proverWasmInfo : verifierWasmInfo).textContent =
+          `wasm ${fmtBytes(msg.size)} · sha-256 ${msg.sha256.slice(0, 8)}…`;
+        (role === "prover" ? proverWasmInfo : verifierWasmInfo).title =
+          `sha-256 ${msg.sha256}`;
         break;
     }
   };

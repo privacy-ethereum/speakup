@@ -96,6 +96,22 @@ fn verifier_svole() -> VerifierSvole {
     )
 }
 
+/// The embedded guest module for `program`, so the page can show facts
+/// about the exact bytes this party runs (size, hash).
+#[wasm_bindgen]
+pub fn guest_wasm(program: &str) -> Result<Vec<u8>, JsError> {
+    let wasm = match program {
+        "square" => SQUARE_WASM,
+        "age" => AGE_WASM,
+        "sha256" => SHA256_WASM,
+        "regex" => REGEX_WASM,
+        "luhn" => LUHN_WASM,
+        "csv" => CSV_WASM,
+        _ => return Err(JsError::new(&format!("unknown program: {program}"))),
+    };
+    Ok(wasm.to_vec())
+}
+
 fn parse_module(wasm: &[u8]) -> Result<Module, JsError> {
     Module::parse(wasm).map_err(err)
 }

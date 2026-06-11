@@ -5,6 +5,7 @@
 // the mpz protocol over it, and the page relays the bytes to the peer.
 
 import init, {
+  guest_wasm,
   prover_age,
   prover_luhn,
   prover_csv,
@@ -23,7 +24,17 @@ import init, {
 
 export type Role = "prover" | "verifier";
 
+/// Programs with a fixed, embedded guest module (everything but `wat`).
+export type EmbeddedProgram =
+  | "square"
+  | "age"
+  | "sha256"
+  | "regex"
+  | "luhn"
+  | "csv";
+
 export type PartyRequest =
+  | { type: "guest_info"; program: EmbeddedProgram }
   | { type: "run"; role: Role; program: "square"; x: number }
   | { type: "run"; role: Role; program: "age"; birthdate: string; today: number }
   | {
@@ -62,7 +73,8 @@ export type PartyRequest =
 export type PartyResponse =
   | { type: "ready" }
   | { type: "done"; result: string; ms: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string };
 
 const post = (msg: PartyResponse) => self.postMessage(msg);
 
@@ -71,6 +83,18 @@ const initialized = init().then(() => post({ type: "ready" }));
 self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
   await initialized;
   const msg = ev.data;
+  if (msg.type === "guest_info") {
+    // Facts about this party's own embedded module — the page shows both
+    // parties' answers side by side, so "same module, same hash" is
+    // something visitors can check, not just read.
+    const bytes = guest_wasm(msg.program);
+    const digest = await crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer);
+    const sha256 = [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    post({ type: "guest_info", program: msg.program, size: bytes.length, sha256 });
+    return;
+  }
   if (msg.type !== "run") return;
   const port = ev.ports[0];
   if (!port) {

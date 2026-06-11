@@ -63,6 +63,11 @@ regex table and CSV column index rely on this.
   `new_single_threaded`).
 - Every program has `prover_*`/`verifier_*` entry points (used by the app)
   plus a single-instance `*_zkvm` (used by tests), sharing per-role inners.
+- "view full source" modal: the guest `lib.rs` files are `?raw`-imported
+  from `../guests` (vite `server.fs.allow` covers it). The wasm-info line
+  under each program box is computed per party: a `guest_info` worker
+  request hashes that worker's embedded module (`guest_wasm` export), so
+  the two panes show independently computed, matching hashes.
 - Guest crates must NEVER be linked into `rust/` (mpz-vm-sys emits `vc.*`
   wasm imports nothing satisfies). Shared logic goes in a separate crate with
   no mpz-vm-sys dep — see `guests/regex-core`.
