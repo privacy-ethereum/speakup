@@ -41,7 +41,6 @@ const SQUARE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/square.wasm
 const AGE_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/age.wasm"));
 const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm"));
 const REGEX_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/regex.wasm"));
-const SUDOKU_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sudoku.wasm"));
 const LUHN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/luhn.wasm"));
 const MEAN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mean.wasm"));
 
@@ -287,9 +286,9 @@ pub async fn age_zkvm(birthdate: String, today: i32) -> Result<i32, JsError> {
 
 // === sha256 ===
 
-/// Message capacity of the sha256 guest: the digest is written 4 KiB past the
-/// start of the message buffer.
-const SHA256_MSG_CAP: usize = 4096;
+/// Demo cap on the message size; the guest itself only needs `len + 32`
+/// bytes of buffer, but proving cost grows linearly with the length.
+const SHA256_MSG_CAP: usize = 128 * 1024;
 
 fn check_msg_len(len: usize) -> Result<(), JsError> {
     if len == 0 || len > SHA256_MSG_CAP {
@@ -300,12 +299,13 @@ fn check_msg_len(len: usize) -> Result<(), JsError> {
     Ok(())
 }
 
-fn realloc_args() -> Vec<Param> {
+/// `cabi_realloc(0, 0, 1, msg_len + 32)`: the message plus digest space.
+fn realloc_args(msg_len: usize) -> Vec<Param> {
     vec![
         Param::Public(Value::I32(0)),
         Param::Public(Value::I32(0)),
         Param::Public(Value::I32(1)),
-        Param::Public(Value::I32((SHA256_MSG_CAP + 32) as i32)),
+        Param::Public(Value::I32((msg_len + 32) as i32)),
     ]
 }
 
@@ -325,8 +325,12 @@ macro_rules! sha256_inner {
             input: &Sha256Input<'_>,
         ) -> Result<String, JsError> {
             let realloc = func(module, "cabi_realloc")?;
-            let ptr = expect_i32(party.call(ctx, realloc, realloc_args()).await.map_err(err)?)?
-                as u32;
+            let ptr = expect_i32(
+                party
+                    .call(ctx, realloc, realloc_args(input.len()))
+                    .await
+                    .map_err(err)?,
+            )? as u32;
             #[allow(clippy::redundant_closure_call)]
             ($stage)(party, ptr, input)?;
             let hash = func(module, "hash")?;
@@ -581,125 +585,6 @@ pub async fn wat_zkvm(source: String, x: i32) -> Result<i32, JsError> {
     let (rp, rv) = join(
         square_prover_inner(&mut prover, &mut ctx_p, &module, x),
         square_verifier_inner(&mut verifier, &mut ctx_v, &module),
-    )
-    .await;
-    let (rp, rv) = (rp?, rv?);
-    if rp != rv {
-        return Err(JsError::new("party results differ"));
-    }
-    Ok(rp)
-}
-
-// === sudoku ===
-
-/// Grid size shared with the sudoku guest.
-const SUDOKU_GRID: usize = 81;
-
-/// Parses an 81-character grid string into cell values. `allow_empty`
-/// accepts `0` / `.` cells (for the puzzle).
-fn parse_grid(s: &str, allow_empty: bool) -> Result<Vec<u8>, JsError> {
-    let cells: Vec<u8> = s
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| match c {
-            '1'..='9' => Ok(c as u8 - b'0'),
-            '0' | '.' if allow_empty => Ok(0),
-            _ => Err(JsError::new(&format!("invalid grid character: {c:?}"))),
-        })
-        .collect::<Result<_, _>>()?;
-    if cells.len() != SUDOKU_GRID {
-        return Err(JsError::new(&format!(
-            "grid must have {SUDOKU_GRID} cells, got {}",
-            cells.len()
-        )));
-    }
-    Ok(cells)
-}
-
-/// Looks up the sudoku guest's buffers (public puzzle, private solution).
-fn sudoku_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32), JsError> {
-    let puzzle = expect_i32(vm.call_local(func(module, "puzzle_ptr")?, vec![]).map_err(err)?)?;
-    let solution =
-        expect_i32(vm.call_local(func(module, "solution_ptr")?, vec![]).map_err(err)?)?;
-    Ok((puzzle as u32, solution as u32))
-}
-
-async fn sudoku_prover_inner(
-    prover: &mut Prover<ProverSvole>,
-    ctx: &mut Context,
-    module: &Module,
-    puzzle: &[u8],
-    solution: &[u8],
-) -> Result<i32, JsError> {
-    let (puzzle_ptr, solution_ptr) = sudoku_ptrs(prover, module)?;
-    prover.write(puzzle_ptr, Write::Public(puzzle)).map_err(err)?;
-    prover
-        .write(solution_ptr, Write::Private(solution))
-        .map_err(err)?;
-    let r = prover
-        .call(ctx, func(module, "check")?, vec![])
-        .await
-        .map_err(err)?;
-    expect_i32(r)
-}
-
-async fn sudoku_verifier_inner(
-    verifier: &mut Verifier<VerifierSvole>,
-    ctx: &mut Context,
-    module: &Module,
-    puzzle: &[u8],
-) -> Result<i32, JsError> {
-    let (puzzle_ptr, solution_ptr) = sudoku_ptrs(verifier, module)?;
-    verifier.write(puzzle_ptr, Write::Public(puzzle)).map_err(err)?;
-    verifier
-        .write(solution_ptr, Write::Blind(SUDOKU_GRID))
-        .map_err(err)?;
-    let r = verifier
-        .call(ctx, func(module, "check")?, vec![])
-        .await
-        .map_err(err)?;
-    expect_i32(r)
-}
-
-/// Prover side of the sudoku check: proves the private `solution` solves the
-/// public `puzzle`. Returns the revealed 0/1 flag.
-#[wasm_bindgen]
-pub async fn prover_sudoku(
-    port: MessagePort,
-    puzzle: String,
-    solution: String,
-) -> Result<i32, JsError> {
-    let puzzle = parse_grid(&puzzle, true)?;
-    let solution = parse_grid(&solution, false)?;
-    let module = parse_module(SUDOKU_WASM)?;
-    let mut prover = prover_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
-    sudoku_prover_inner(&mut prover, &mut ctx, &module, &puzzle, &solution).await
-}
-
-/// Verifier side of the sudoku check. Knows the puzzle; learns only the
-/// revealed 0/1 flag.
-#[wasm_bindgen]
-pub async fn verifier_sudoku(port: MessagePort, puzzle: String) -> Result<i32, JsError> {
-    let puzzle = parse_grid(&puzzle, true)?;
-    let module = parse_module(SUDOKU_WASM)?;
-    let mut verifier = verifier_from(module.clone())?;
-    let mut ctx = Context::new_single_threaded(port_io(port));
-    sudoku_verifier_inner(&mut verifier, &mut ctx, &module, &puzzle).await
-}
-
-/// Both parties in this instance (tests / reference).
-#[wasm_bindgen]
-pub async fn sudoku_zkvm(puzzle: String, solution: String) -> Result<i32, JsError> {
-    let puzzle = parse_grid(&puzzle, true)?;
-    let solution = parse_grid(&solution, false)?;
-    let module = parse_module(SUDOKU_WASM)?;
-    let mut prover = prover_from(module.clone())?;
-    let mut verifier = verifier_from(module.clone())?;
-    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
-    let (rp, rv) = join(
-        sudoku_prover_inner(&mut prover, &mut ctx_p, &module, &puzzle, &solution),
-        sudoku_verifier_inner(&mut verifier, &mut ctx_v, &module, &puzzle),
     )
     .await;
     let (rp, rv) = (rp?, rv?);

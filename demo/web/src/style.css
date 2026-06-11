@@ -215,6 +215,27 @@ main {
   cursor: pointer;
 }
 
+.presets {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.presets button {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.presets button:hover { color: var(--text); border-color: var(--muted); }
+.presets-hint { font-size: 0.7rem; font-style: italic; }
+
 .cheat {
   font: inherit;
   font-size: 0.8rem;

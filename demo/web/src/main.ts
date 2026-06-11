@@ -26,9 +26,6 @@ const patternRow = $("pattern-row");
 const patternInput = $<HTMLInputElement>("pattern-input");
 const watRow = $("wat-row");
 const watInput = $<HTMLTextAreaElement>("wat-input");
-const sudokuInput = $<HTMLInputElement>("sudoku-input");
-const sudokuRow = $("sudoku-row");
-const puzzleInput = $<HTMLInputElement>("puzzle-input");
 const cardInput = $<HTMLInputElement>("card-input");
 const valuesInput = $<HTMLInputElement>("values-input");
 const thresholdRow = $("threshold-row");
@@ -50,13 +47,13 @@ const stepMode = $<HTMLInputElement>("step-mode");
 const nextMsgBtn = $<HTMLButtonElement>("next-msg");
 const queuedCount = $("queued-count");
 const cheatBtn = $<HTMLButtonElement>("cheat");
+const shaPresets = $("sha-presets");
 
 type ProgramKey =
   | "square"
   | "age"
   | "sha256"
   | "regex"
-  | "sudoku"
   | "luhn"
   | "mean"
   | "wat";
@@ -153,7 +150,7 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     requests() {
       const bytes = new TextEncoder().encode(textInput.value);
       if (bytes.length === 0) return "message must not be empty";
-      if (bytes.length > 4096) return "message too long (max 4096 bytes)";
+      if (bytes.length > 131072) return "message too long (max 128 KB)";
       return {
         prover: {
           type: "run",
@@ -223,40 +220,6 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       };
     },
     secretName: "the test string",
-  },
-  sudoku: {
-    source: `fn check() -> i32 {
-    // rows, cols, boxes each contain 1-9;
-    // the private grid extends the clues
-    reveal(is_valid(&PUZZLE, &SOLUTION))
-}`,
-    input: sudokuInput,
-    inputLabel: "private solution (81 cells)",
-    centerRow: sudokuRow,
-    requests() {
-      const clean = (s: string) => s.replace(/\s/g, "");
-      const puzzle = clean(puzzleInput.value);
-      const solution = clean(sudokuInput.value);
-      if (!/^[0-9.]{81}$/.test(puzzle)) return "puzzle must be 81 cells (0-9 or .)";
-      if (!/^[1-9]{81}$/.test(solution)) return "solution must be 81 cells (1-9)";
-      return {
-        prover: { type: "run", role: "prover", program: "sudoku", puzzle, solution },
-        verifier: { type: "run", role: "verifier", program: "sudoku", puzzle, solution: "" },
-      };
-    },
-    blind: () => "░░░ … ░░░ (81 cells)",
-    proverStage: () => "staging private solution grid (81 cells)",
-    render(result) {
-      const ok = result === "1";
-      return {
-        text: ok ? "✓ valid solution" : "✗ not a valid solution",
-        cls: ok ? "ok" : "no",
-        log: ok
-          ? "proved: the puzzle is solved"
-          : "not proven: grid invalid or doesn't match the clues",
-      };
-    },
-    secretName: "the solution grid",
   },
   luhn: {
     source: `fn check(len: i32) -> i32 {
@@ -416,6 +379,7 @@ const selectProgram = (key: ProgramKey) => {
     if (other.centerRow) other.centerRow.hidden = true;
   }
   p.input.hidden = false;
+  shaPresets.hidden = key !== "sha256";
   if (p.centerRow) p.centerRow.hidden = false;
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
@@ -428,6 +392,16 @@ const selectProgram = (key: ProgramKey) => {
 tabs.addEventListener("click", (ev) => {
   const btn = (ev.target as HTMLElement).closest("button");
   if (btn?.dataset.program) selectProgram(btn.dataset.program as ProgramKey);
+});
+
+// Preset messages for the sha-256 program: deterministic filler of an exact
+// size, so runs are reproducible and the cost scaling is visible.
+shaPresets.addEventListener("click", (ev) => {
+  const btn = (ev.target as HTMLElement).closest("button");
+  if (!btn?.dataset.size) return;
+  const size = Number(btn.dataset.size);
+  textInput.value = "speakup demo data ".repeat(Math.ceil(size / 18)).slice(0, size);
+  blindCell.textContent = PROGRAMS.sha256.blind();
 });
 
 // --- feature flags ---

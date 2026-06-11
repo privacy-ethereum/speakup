@@ -2,11 +2,11 @@
 //!
 //! Memory is handed out through [`cabi_realloc`], the WebAssembly Component
 //! Model's canonical reallocation export: the host calls
-//! `cabi_realloc(0, 0, align, len)` to allocate the message buffer, writes the
-//! message there, then calls [`hash`] with that pointer and the message length.
-//! The guest computes SHA-256, writes the 32-byte digest just past the 4 KiB
-//! message region, reveals it through the VCI so the verifier learns it, and
-//! returns the digest's address. SHA-256 uses only operations the VM supports
+//! `cabi_realloc(0, 0, align, len + 32)` to allocate the message buffer plus
+//! digest space, writes the message there, then calls [`hash`] with that
+//! pointer and the message length. The guest computes SHA-256, writes the
+//! 32-byte digest just past the message, reveals it through the VCI so the
+//! verifier learns it, and returns the digest's address. SHA-256 uses only operations the VM supports
 //! (`rotate_right` lowers to `i32.rotr`, etc.).
 
 use std::alloc::Layout;
@@ -53,11 +53,12 @@ pub extern "C" fn cabi_realloc(old_ptr: i32, old_size: i32, align: i32, new_size
     }
 }
 
-/// Hashes the `len` bytes at `ptr`, writes the digest 4 KiB into the message
-/// region, reveals it, and returns the digest's address.
+/// Hashes the `len` bytes at `ptr`, writes the digest just past the message
+/// (the buffer must have been allocated with 32 spare bytes), reveals it,
+/// and returns the digest's address.
 #[no_mangle]
 pub extern "C" fn hash(ptr: i32, len: i32) -> i32 {
-    let digest_ptr = ptr + 4096;
+    let digest_ptr = ptr + len;
     sha256(ptr as *const u8, len as usize, digest_ptr as *mut u8);
     unsafe {
         let handle = reveal_bytes(digest_ptr, 32);

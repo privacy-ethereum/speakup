@@ -18,7 +18,6 @@
         <button data-program="age">age check</button>
         <button data-program="sha256">sha-256</button>
         <button data-program="regex">regex</button>
-        <button data-program="sudoku">sudoku</button>
         <button data-program="luhn">credit card</button>
         <button data-program="mean">average</button>
         <button data-program="wat" id="wat-tab" hidden>custom (wat)</button>
@@ -36,10 +35,17 @@
           <div class="label" id="input-label">private input</div>
           <input id="x-input" type="number" value="6" />
           <input id="date-input" type="date" value="1990-04-15" hidden />
-          <input id="text-input" type="text" value="hello speakup" maxlength="4096" hidden />
+          <input id="text-input" type="text" value="hello speakup" maxlength="131072" hidden />
+          <div class="presets" id="sha-presets" hidden>
+            <span>presets:</span>
+            <button data-size="1024">1 KB</button>
+            <button data-size="4096">4 KB</button>
+            <button data-size="16384">16 KB</button>
+            <button data-size="65536">64 KB</button>
+            <button data-size="131072">128 KB</button>
+            <span class="presets-hint">proving scales with size: 16 KB ≈ 10 s</span>
+          </div>
           <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
-          <input id="sudoku-input" type="text" maxlength="100" spellcheck="false" hidden
-            value="534678912672195348198342567859761423426853791713924856961537284287419635345286179" />
           <input id="card-input" type="text" value="4539 1488 0343 6467" maxlength="30" hidden />
           <input id="values-input" type="text" value="62000, 71000, 58000" hidden />
         </div>
@@ -50,11 +56,6 @@
         <div class="memory center-input" id="pattern-row" hidden>
           <div class="label">public pattern — known to both</div>
           <input id="pattern-input" type="text" value="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}" spellcheck="false" />
-        </div>
-        <div class="memory center-input" id="sudoku-row" hidden>
-          <div class="label">public puzzle — known to both (0 = empty)</div>
-          <input id="puzzle-input" type="text" maxlength="100" spellcheck="false"
-            value="530070000600195000098000060800060003400803001700020006060000280000419005000080079" />
         </div>
         <div class="memory center-input" id="threshold-row" hidden>
           <div class="label">public threshold — known to both</div>

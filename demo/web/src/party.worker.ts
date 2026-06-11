@@ -11,7 +11,6 @@ import init, {
   prover_regex,
   prover_sha256,
   prover_square,
-  prover_sudoku,
   prover_wat,
   verifier_age,
   verifier_luhn,
@@ -19,7 +18,6 @@ import init, {
   verifier_regex,
   verifier_sha256,
   verifier_square,
-  verifier_sudoku,
   verifier_wat,
 } from "./pkg/zkvm_demo.js";
 
@@ -44,13 +42,6 @@ export type PartyRequest =
       textLen: number;
     }
   | { type: "run"; role: Role; program: "wat"; source: string; x: number }
-  | {
-      type: "run";
-      role: Role;
-      program: "sudoku";
-      puzzle: string; // public: both sides get it
-      solution: string; // empty on the verifier side
-    }
   | {
       type: "run";
       role: Role;
@@ -121,13 +112,6 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
           msg.role === "prover"
             ? await prover_wat(port, msg.source, msg.x)
             : await verifier_wat(port, msg.source),
-        );
-        break;
-      case "sudoku":
-        result = String(
-          msg.role === "prover"
-            ? await prover_sudoku(port, msg.puzzle, msg.solution)
-            : await verifier_sudoku(port, msg.puzzle),
         );
         break;
       case "luhn":

@@ -7,28 +7,10 @@
 use wasm_bindgen_test::*;
 use zkvm_demo::{
     age_zkvm, build_table, luhn_zkvm, mean_zkvm, prover_square, regex_zkvm, sha256_zkvm,
-    square_zkvm, sudoku_zkvm, verifier_square, wat_zkvm,
+    square_zkvm, verifier_square, wat_zkvm,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);
-
-/// The Wikipedia example puzzle and its unique solution.
-const SUDOKU_PUZZLE: &str =
-    "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
-const SUDOKU_SOLUTION: &str =
-    "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
-
-#[wasm_bindgen_test]
-async fn sudoku_runs_in_browser() {
-    let valid = sudoku_zkvm(SUDOKU_PUZZLE.into(), SUDOKU_SOLUTION.into())
-        .await
-        .unwrap();
-    assert_eq!(valid, 1);
-    // One tampered cell: still 1-9 everywhere, but no longer a solution.
-    let mut bad = SUDOKU_SOLUTION.to_string();
-    bad.replace_range(0..1, "4");
-    assert_eq!(sudoku_zkvm(SUDOKU_PUZZLE.into(), bad).await.unwrap(), 0);
-}
 
 #[wasm_bindgen_test]
 async fn luhn_runs_in_browser() {
@@ -126,5 +108,16 @@ async fn sha256_runs_in_browser() {
     assert_eq!(
         digest,
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn sha256_handles_a_1kib_message() {
+    // Past the old 4 KiB-buffer layout's assumptions: the digest now lands
+    // at ptr + len. Reference digest of 1024 x 0xAB from hashlib.
+    let digest = sha256_zkvm(vec![0xAB; 1024]).await.unwrap();
+    assert_eq!(
+        digest,
+        "4555555dc68d872c2270ba89ecc5f6f094812f65372b37e50071fe5168031c49"
     );
 }

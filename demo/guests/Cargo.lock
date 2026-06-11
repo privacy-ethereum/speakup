@@ -50,10 +50,3 @@ version = "0.0.0"
 dependencies = [
  "mpz-vm-sys",
 ]
-
-[[package]]
-name = "sudoku-guest"
-version = "0.0.0"
-dependencies = [
- "mpz-vm-sys",
-]
