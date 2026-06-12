@@ -406,6 +406,52 @@ main {
   border-style: solid;
 }
 
+.remote-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.invite {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.8rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px dashed var(--verifier);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.invite:hover { color: var(--text); }
+.invite-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+#invite-qr {
+  background: #fff;
+  border-radius: 6px;
+}
+.invite-link {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--verifier);
+  word-break: break-all;
+  max-width: 18rem;
+}
+.remote-status { font-size: 0.8rem; color: var(--muted); white-space: pre-line; }
+
+/* Guest mode (this device is the remote verifier): the run is configured
+   on the prover's device, so the local input UI is display-only. */
+.remote-guest .center-input,
+.remote-guest .pane.prover .memory {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 footer {
   padding: 1rem 2rem 1.5rem;
   text-align: center;

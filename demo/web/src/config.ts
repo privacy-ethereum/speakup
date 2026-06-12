@@ -5,6 +5,9 @@ const DEFAULTS = {
   /// "Tamper with a message" button: corrupt one relayed protocol message
   /// and watch the verifier reject the proof.
   cheat: false,
+  /// "Verify from another device": run the verifier on a second device
+  /// over a WebRTC DataChannel, joined by scanning a QR code.
+  remote: true,
 };
 
 const params = new URLSearchParams(location.search);
@@ -16,4 +19,5 @@ const flag = (name: string, fallback: boolean) => {
 
 export const FEATURES = {
   cheat: flag("cheat", DEFAULTS.cheat),
+  remote: flag("remote", DEFAULTS.remote),
 };

@@ -96,10 +96,18 @@ regex table and CSV column index rely on this.
 
 - One worker per party (`web/src/party.worker.ts`, spawned twice), each with
   its own wasm memory, talking over a MessageChannel. The page relays every
-  message (`web/src/main.ts`): that's where traffic counters, the slow-motion
-  queue, and the cheat tamper live.
+  message (`web/src/main.ts`): that's where traffic counters, the simulated
+  latency, and the cheat tamper live. Latency is per direction, overlapping
+  (delivery scheduled at arrival + latency), so it costs latency × round-trip
+  depth, not × message count. The tamper flips a middle byte of the first
+  big-enough message past TAMPER_AT: small batches can be pure mux framing,
+  and a flipped frame header is caught by the transport ("frame size too
+  big") instead of the crypto consistency check.
 - `rust/src/port_io.rs` adapts a MessagePort to AsyncRead/AsyncWrite via mpsc
-  pumps (the mux needs Send+Sync; MessagePort is neither). `port_mux.rs` runs
+  pumps (the mux needs Send+Sync; MessagePort is neither). Writes are
+  buffered until `poll_flush`, so one mux flush batch = one postMessage —
+  without this every frame costs two messages (header + body) and the
+  page-visible msg counter doubles. `port_mux.rs` runs
   a `tlsn-mux` connection over it and implements mpz's `Mux`, so each context
   fork gets its own logical stream (`Context::new` instead of
   `new_single_threaded`).
@@ -167,6 +175,35 @@ regex table and CSV column index rely on this.
   editable: every edit re-requests `json_info` (paths) and `json_public`
   (words) from the prover worker, with the doc echoed back in each
   response so stale answers are dropped.
+- Remote verifier (`web/src/remote.ts` + the remote section of main.ts;
+  flag `remote`, default on, `?remote=0`): the page relay is the single
+  point where messages cross parties, so a second device is page-level
+  rewiring only — the host (prover) device shows a QR of `?join=<peer-id>`,
+  the scanning device becomes the verifier, and each page pumps its own
+  party's MessagePort into one reliable PeerJS DataChannel instead of into
+  the other local worker. Workers/bindings unchanged; both workers still
+  spawn on both devices (the idle one serves `guest_info`, so each device
+  shows its own independently computed hash). Only signaling touches the
+  PeerJS cloud broker; the protocol flows P2P (LAN-local on a shared
+  network; no TURN, so client-isolated guest Wi-Fi blocks it — hotspot is
+  the workaround). Wire format: 1 tag byte, then protocol bytes verbatim
+  or control JSON with explicit typed-array encoding (run requests carry
+  Uint8Array/Uint32Array/BigInt64Array); PeerJS binary serialization
+  chunks >16 KB frames, so the 1 MB custom-wasm request needs no extra
+  care. Control flow: the guest's pkg version rides in connection
+  metadata and the host answers `hello` (version mismatch = different
+  embedded guests → refuse); Run on the host sends `start` carrying the
+  verifier request (public data only, same zeroed private fields as local
+  mode) + blind string + claim labels (`RemoteDisplay`, consumed by the
+  json/transcript render overrides) + summary log lines; `done`/`error`/
+  `abort` mirror to the peer. Both directions go through `deliver()`, so
+  traffic counters, the latency slider, and the tamper button work
+  per-device. Gotchas: a `start` can beat worker readiness
+  (`pendingStart`) and protocol bytes race ahead of it (`pendingBytes`,
+  flushed in order); a broker blip after connect must NOT tear the link
+  down (no peer-level error handler inside RemoteLink); `RemoteLink.close()`
+  suppresses its own teardown event, so deliberate disconnects invoke
+  `remoteEvents.onClose` themselves.
 - Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
   button (default off, undecided whether it ships). The WAT editor was
   replaced by the "custom wasm" tab (default on): drop a compiled guest,
@@ -176,7 +213,7 @@ regex table and CSV column index rely on this.
   function over i32/i64 scalars. The verifier request carries zeroed
   private values. NOTE: never name a `#[wasm_bindgen]` parameter `wasm` —
   the generated glue shadows its own `wasm` instance object.
-  The relay-delay slider is always shown; the step-through-messages mode
+  The latency slider is always shown; the step-through-messages mode
   was dropped. The Run button morphs into Abort during a run (abort
   terminates and respawns both workers — the protocol can't be interrupted
   any other way).
@@ -194,7 +231,8 @@ regex table and CSV column index rely on this.
 - Perf anchors (Chrome, M-series 18 cores → 9 threads/party, threaded build
   + mpz c215974 + wasm-simd aes patch): square ≈ 0.08 s; regex email ≈ 0.28 s;
   csv 4 rows ≈ 0.11 s; transcript (jsonplaceholder_post, 1543 private bytes)
-  ≈ 0.37 s / 270 msgs / ~1.5 MB; sha-256 16 KB ≈ 3.0 s / 400 msgs / ~2.5 MB;
+  ≈ 0.37 s / 140 msgs / ~1.5 MB; sha-256 16 KB ≈ 3.0 s / 206 msgs / ~2.5 MB
+  (msg counts post write-coalescing — pre-coalescing 270 / 400);
   64 KB ≈ 11 s (OOM-aborted before c215974); 128 KB still OOMs. Pre-aes-patch:
   square 0.10 s, regex 0.31 s, transcript 0.42 s, sha-256 16 KB 3.7 s, 64 KB
   13 s. Pre-threads baselines: square 0.4 s, sha-256 16 KB 10.7 s, regex 1.6 s.

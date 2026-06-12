@@ -44,7 +44,12 @@ with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol
 over a `MessageChannel`; the page relays the messages and surfaces live
-traffic counters (a square proof completes in ~130 ms). The wasm is
+traffic counters (a square proof completes in ~130 ms). Or make it literally
+two machines: **"verify from another device"** shows a QR code, and the
+device that scans it becomes the verifier — the protocol then runs over a
+direct peer-to-peer WebRTC channel (only the brief connection handshake
+touches a public broker; on the same network the traffic stays on the LAN).
+The wasm is
 multithreaded: each party runs a rayon pool on nested workers via
 [web-spawn](https://github.com/tlsnotary/tlsn-utils), so the heavy proving
 steps use all your cores. That requires cross-origin isolation
@@ -86,15 +91,14 @@ cd ../web && npm install && npm run dev   # then open http://localhost:5173
 
 ## Feature flags
 
-Three features are gated behind flags (default **off**) in
-[`web/src/config.ts`](web/src/config.ts), pending a decision on whether they
-belong in this demo. Try them without a rebuild via URL params:
+Some features are gated behind flags in
+[`web/src/config.ts`](web/src/config.ts). Toggle them without a rebuild via
+URL params:
 
-| Flag | URL param | What it adds |
-| --- | --- | --- |
-| `slowMotion` | `?slow=1` | Relay-delay slider and a step-through-messages mode (the page relays all protocol traffic, so it can pause it). |
-| `cheat` | `?cheat=1` | "Tamper with a message" button: the relay flips one bit in protocol message #10 and the verifier rejects the proof. |
-| `watEditor` | `?wat=1` | "custom (wat)" tab: write a guest in WebAssembly text format; both parties compile the same (public) source and run it over a private `x`. |
+| Flag | Default | URL param | What it adds |
+| --- | --- | --- | --- |
+| `cheat` | off | `?cheat=1` | "Tamper with a message" button: the relay flips one bit in protocol message #10 and the verifier rejects the proof. |
+| `remote` | on | `?remote=0` | "Verify from another device": QR-code invite, the scanning device runs the verifier over a peer-to-peer WebRTC channel. |
 
 ## Developing
 
