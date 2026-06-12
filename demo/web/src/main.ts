@@ -1675,7 +1675,7 @@ const remoteEvents = {
     remote = { kind: "local" };
     pendingStart = null;
     pendingBytes.length = 0;
-    document.body.classList.remove("remote-guest");
+    document.body.classList.remove("remote-guest", "remote-host");
     remoteConnected.hidden = true;
     inviteBtn.hidden = false;
     // The note belongs in the remote party's pane: the prover pane on a
@@ -1738,6 +1738,7 @@ inviteBtn.addEventListener("click", () => {
       }
       link.sendControl({ kind: "hello", version: __PKG_VERSION__ });
       remote = { kind: "host", link };
+      document.body.classList.add("remote-host");
       remoteConnected.hidden = false;
       remoteStatusEl.textContent =
         "✓ remote verifier connected — runs verify on the other device";

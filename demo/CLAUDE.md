@@ -198,7 +198,12 @@ regex table and CSV column index rely on this.
   json/transcript render overrides) + summary log lines; `done`/`error`/
   `abort` mirror to the peer. Both directions go through `deliver()`, so
   traffic counters, the latency slider, and the tamper button work
-  per-device. Gotchas: a `start` can beat worker readiness
+  per-device. While connected, the remote party's pane is replaced by a
+  placeholder (`.remote-placeholder`, toggled via `remote-host`/
+  `remote-guest` body classes) — the local UI in that pane would show
+  this page's inputs, not the actual remote party's; the pane's log stays
+  (it carries the remote progress lines). Gotchas: a `start` can beat
+  worker readiness
   (`pendingStart`) and protocol bytes race ahead of it (`pendingBytes`,
   flushed in order); a broker blip after connect must NOT tear the link
   down (no peer-level error handler inside RemoteLink); `RemoteLink.close()`

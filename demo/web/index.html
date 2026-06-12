@@ -91,6 +91,13 @@
 }</textarea>
           <textarea id="transcript-input" rows="14" readonly spellcheck="false" hidden></textarea>
         </div>
+        <!-- Shown instead of the program/input boxes when this page is a
+             remote verifier: the real prover lives on the other device. -->
+        <div class="remote-placeholder">
+          <div class="remote-mark">❓</div>
+          <p>The prover — and its secret — are on the other device.<br />
+            Nothing but protocol messages reaches this page.</p>
+        </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
       </section>
 
@@ -208,6 +215,13 @@
         <div class="memory">
           <div class="label">prover's input, as the verifier sees it</div>
           <div class="blind" id="blind-cell">░░░░░░░░</div>
+        </div>
+        <!-- Shown instead of the program/blind boxes when a remote verifier
+             is connected: the real verifier lives on the scanned device. -->
+        <div class="remote-placeholder">
+          <div class="remote-mark">📱</div>
+          <p>The verifier runs on the other device,<br />
+            checking every step — and its own copy of the program — there.</p>
         </div>
         <div class="log" id="verifier-log" aria-live="polite"></div>
       </section>

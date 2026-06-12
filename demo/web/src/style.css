@@ -444,10 +444,31 @@ main {
 }
 .remote-status { font-size: 0.8rem; color: var(--muted); white-space: pre-line; }
 
+/* Remote mode: the other party lives on the other device, so its pane
+   shows a placeholder instead of this page's (irrelevant) local UI. The
+   pane's log stays — it carries the remote progress lines. */
+.remote-placeholder {
+  display: none;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 1.5rem 0 0.5rem;
+}
+.remote-mark { font-size: 3.5rem; line-height: 1; margin-bottom: 0.5rem; }
+body.remote-guest .pane.prover .program-box,
+body.remote-guest .pane.prover .memory,
+body.remote-host .pane.verifier .program-box,
+body.remote-host .pane.verifier .memory {
+  display: none;
+}
+body.remote-guest .pane.prover .remote-placeholder,
+body.remote-host .pane.verifier .remote-placeholder {
+  display: block;
+}
+
 /* Guest mode (this device is the remote verifier): the run is configured
-   on the prover's device, so the local input UI is display-only. */
-.remote-guest .center-input,
-.remote-guest .pane.prover .memory {
+   on the prover's device, so the center input UI is display-only. */
+.remote-guest .center-input {
   opacity: 0.55;
   pointer-events: none;
 }
