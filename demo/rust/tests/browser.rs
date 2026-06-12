@@ -7,7 +7,8 @@
 use wasm_bindgen_test::*;
 use zkvm_demo::{
     age_zkvm, build_table, csv_zkvm, custom_zkvm, guest_wasm, luhn_zkvm, module_exports,
-    prover_square, regex_zkvm, sha256_zkvm, square_zkvm, verifier_square,
+    prover_square, regex_zkvm, sha256_zkvm, square_zkvm, transcript_info, transcript_zkvm,
+    verifier_square,
 };
 
 // A dedicated worker, not the page: rayon's parallel sections block the
@@ -118,6 +119,29 @@ async fn custom_module_runs_in_browser() {
     );
     let out = custom_zkvm(wasm, "compute".into(), vec![1], vec![6]).await.unwrap();
     assert_eq!(out, "49");
+}
+
+#[wasm_bindgen_test]
+async fn transcript_runs_in_browser() {
+    init_threads().await;
+    // Assert mode: prove the API assigned id 101 (transcript-verify's
+    // jsonplaceholder_post fixture) — only the 0/1 flag is revealed.
+    let out = transcript_zkvm("id".into(), Some("101".into())).await.unwrap();
+    assert_eq!(out, r#"{"ok":1,"value":""}"#);
+    // A wrong expected value encodes fine but legitimately fails to prove.
+    let out = transcript_zkvm("id".into(), Some("102".into())).await.unwrap();
+    assert_eq!(out, r#"{"ok":0,"value":""}"#);
+    // Disclose mode still works: reveal the value at the path.
+    let out = transcript_zkvm("title".into(), None).await.unwrap();
+    assert_eq!(out, r#"{"ok":1,"value":"foo"}"#);
+    // The info JSON drives the page's path dropdown and claim line.
+    let info = transcript_info().unwrap();
+    assert!(info.contains(r#""path":"id""#), "{info}");
+    assert!(info.contains(r#""host":"jsonplaceholder.typicode.com""#), "{info}");
+    assert!(info.contains(r#""reqBody":true"#), "{info}");
+    assert!(info.contains(r#""status":201"#), "{info}");
+    // Paths that don't resolve to a scalar fail before the protocol runs.
+    assert!(transcript_zkvm("no.such.path".into(), None).await.is_err());
 }
 
 #[wasm_bindgen_test]

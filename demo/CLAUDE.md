@@ -1,8 +1,8 @@
 # Speakup demo — working notes
 
 Browser demo of Speakup (the mpz zk-vm): prover and verifier in separate web
-workers, real OT stack, six example guests. See README.md for the user-facing
-picture; this file is for working on the code.
+workers, real OT stack, seven example guests. See README.md for the
+user-facing picture; this file is for working on the code.
 
 ## Build & test
 
@@ -26,6 +26,10 @@ OUT_DIR; `lib.rs` embeds them) — editing a guest and rebuilding the pkg is one
 step. mpz comes from git, branch `v2`, fetched with the git CLI (libgit2
 chokes on the repo); `Cargo.lock` pins the exact rev (≥ c215974 needed: the
 two-pass QuickSilver is what makes sha-256 64 KB fit in memory at all).
+Cargo only honors `[patch.crates-io]` in the top-level workspace, so mpz's
+own patches do NOT reach this build — rust/Cargo.toml mirrors them (the
+wasm-simd `aes` fork: fixsliced AES over v128, ~10–25% off every run; the
+OT stack sits on it). Re-check mpz's patch section on every pin bump.
 
 ## Threads
 
@@ -99,7 +103,35 @@ regex table and CSV column index rely on this.
   the two panes show independently computed, matching hashes.
 - Guest crates must NEVER be linked into `rust/` (mpz-vm-sys emits `vc.*`
   wasm imports nothing satisfies). Shared logic goes in a separate crate with
-  no mpz-vm-sys dep — see `guests/regex-core`.
+  no mpz-vm-sys dep — see `guests/regex-core` and `guests/transcript-core`.
+- The transcript guest is the advice pattern from tlsn-utils'
+  transcript-verify PR (0xtsukino fork, rev pinned in both Cargo.tomls),
+  inverted for a VM that can't branch on private data: `parse_transcript`
+  runs host-side (prover worker, off the VM), `transcript_core::encode`
+  flattens the span table + claims (method/target/Host/status/JSON path)
+  into a u32 word table written as PUBLIC guest data, and the guest
+  re-derives everything from the private bytes branch-free — the public
+  table drives all control flow. Two claim modes (`W_CLAIM_MODE`): assert
+  ("the value at the path equals this public string", 0/1 only — the UI
+  default; a wrong expected value encodes fine and the proof honestly
+  fails) and disclose (`reveal_bytes` of an OUT buffer the guest masks to
+  zeros unless the symbolic ok flag holds — reveals can't be skipped on a
+  private condition, but CAN be skipped on the public mode). Request
+  bodies are covered as opaque private bytes (framing pinned via the CL
+  digits, contents unconstrained). `transcript-core` holds the layout
+  consts, the verifier (`verify`), the encoder (which self-checks every
+  encoding), and the tests — including exhaustive byte-flip differentials
+  against the real upstream `validate` (for request bodies: against the
+  legal opaque-claim table). Scope cuts (all strictly stricter than
+  upstream): Content-Length framing only, ASCII JSON strings, raw dup-key
+  compare. The fixture (jsonplaceholder_post: hidden JSON POST body, 201
+  response with the assigned id) is copied by rust/build.rs out of the
+  dependency's git checkout (located via `cargo metadata`) — no
+  third-party bytes vendored into the repo. Gotcha: a guest-side `match`
+  merging Ok/Err of `verify` lowers to `select`s with the SYMBOLIC ok flag
+  as an arm — early-return on Err instead (concrete path, both parties
+  take it identically). Every table word is pinned (unused words must be
+  0) so the tampered-word tests stay exhaustive.
 - Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
   button (default off, undecided whether it ships). The WAT editor was
   replaced by the "custom wasm" tab (default on): drop a compiled guest,
@@ -122,10 +154,18 @@ regex table and CSV column index rely on this.
   settings → Pages → source must be "GitHub Actions". Vite base is
   `/speakup-demo/`.
 - Perf anchors (Chrome, M-series 18 cores → 9 threads/party, threaded build
-  + mpz c215974): square ≈ 0.13 s; regex email ≈ 0.34 s; csv 4 rows ≈ 0.12 s;
-  sha-256 16 KB ≈ 3.8 s / 400 msgs / ~2.5 MB; 64 KB ≈ 13 s (OOM-aborted
-  before c215974); 128 KB still OOMs. Pre-threads baselines: square 0.4 s,
-  sha-256 16 KB 10.7 s, regex 1.6 s.
-- Possible next: guided stepper narrative, more polish; Speakup RAM
-  support will eventually allow private-offset designs (see mpz age-span
-  discussion) and may relax the black_box discipline if `select` lands.
+  + mpz c215974 + wasm-simd aes patch): square ≈ 0.08 s; regex email ≈ 0.28 s;
+  csv 4 rows ≈ 0.11 s; transcript (jsonplaceholder_post, 1543 private bytes)
+  ≈ 0.37 s / 270 msgs / ~1.5 MB; sha-256 16 KB ≈ 3.0 s / 400 msgs / ~2.5 MB;
+  64 KB ≈ 11 s (OOM-aborted before c215974); 128 KB still OOMs. Pre-aes-patch:
+  square 0.10 s, regex 0.31 s, transcript 0.42 s, sha-256 16 KB 3.7 s, 64 KB
+  13 s. Pre-threads baselines: square 0.4 s, sha-256 16 KB 10.7 s, regex 1.6 s.
+- `ecdsa` is a placeholder tab only (web/src/main.ts PROGRAMS entry + the
+  index.html button with the `.soon` badge): no guest crate or bindings
+  exist; `requests()` returns a coming-soon message so Run never starts a
+  protocol. Implementing it means the usual full set: guest crate,
+  rust/ entry points + build.rs line, worker request type, PROGRAMS entry.
+- Possible next: the ECDSA guest (signature verification inside the VM),
+  guided stepper narrative, more polish; Speakup RAM support will
+  eventually allow private-offset designs (see mpz age-span discussion)
+  and may relax the black_box discipline if `select` lands.

@@ -25,6 +25,8 @@
         <button data-program="regex">regex</button>
         <button data-program="luhn">credit card</button>
         <button data-program="csv">csv average</button>
+        <button data-program="transcript">https transcript</button>
+        <button data-program="ecdsa">ecdsa <span class="soon">soon</span></button>
         <button data-program="custom">custom wasm</button>
       </nav>
     </header>
@@ -60,6 +62,7 @@
 71000,8
 58000,15
 90000,4</textarea>
+          <textarea id="transcript-input" rows="14" readonly spellcheck="false" hidden></textarea>
         </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
       </section>
@@ -75,6 +78,21 @@
             <label>column <input id="col-input" type="number" value="0" min="0" max="15" /></label>
             <label>threshold <input id="threshold-input" type="number" value="60000" min="0" max="99999" /></label>
           </div>
+        </div>
+        <div class="memory center-input" id="transcript-row" hidden>
+          <div class="label">public claim — known to both</div>
+          <div class="claim" id="transcript-claim">loading fixture…</div>
+          <label class="control-row">JSON field
+            <select id="transcript-path"></select>
+          </label>
+          <label class="control-row">claim
+            <select id="transcript-mode">
+              <option value="assert">assert it equals…</option>
+              <option value="disclose">reveal its value</option>
+            </select>
+          </label>
+          <input id="transcript-expect" type="text" spellcheck="false"
+                 placeholder="expected value" />
         </div>
         <div class="memory center-input" id="custom-row" hidden>
           <div class="label">custom guest — public, both parties run the same module</div>

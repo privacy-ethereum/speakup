@@ -7,7 +7,7 @@ prover and a verifier, both running as WebAssembly in your browser, executing
 a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
-**Status: working v0 over the real protocol.** Six guests run end-to-end in
+**Status: working v0 over the real protocol.** Seven guests run end-to-end in
 the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
 private number), `age` (prove 18+ without revealing the birth date, with a
 date picker), `sha256` (digest of a private message, up to 128 KB with size presets), and `regex` (prove a
@@ -15,11 +15,20 @@ date picker), `sha256` (digest of a private message, up to 128 KB with size pres
 host compiles the regex with `regex-automata`, the guest evaluates the table
 branch-free over a one-hot state vector; demo limits: 32 DFA states, 16 byte
 classes, 256-byte strings), `luhn` (prove a private card number passes the
-Luhn checksum), and
+Luhn checksum),
 `csv` (prove the average of one column of a **private CSV document** reaches
 a public threshold — the guest parses the CSV *inside the VM*, branch-free:
 oblivious column tracking, digit-by-digit number building, and validation,
-revealing neither the contents, the row count, nor the sum) —
+revealing neither the contents, the row count, nor the sum), and
+`transcript` (**a claim about a captured HTTPS exchange**: the
+[transcript-verify](https://github.com/0xtsukino/tlsn-utils/tree/feat/transcript-verify/transcript-verify)
+host parser turns the private request/response bytes into a public span
+table *outside* the VM; the guest re-derives every claim from the private
+bytes branch-free — HTTP grammar, header tiling, Content-Length framing, the
+full JSON node tree — and then either **asserts** that one JSON value at a
+public path equals a public expected string (revealing only the 0/1 flag:
+"the API assigned my POST `id` = 101", with the request body hidden) or
+**discloses** that one value, hiding every other header and field) —
 with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol

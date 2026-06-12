@@ -28,6 +28,10 @@ mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
+# 0xtsukino's transcript-verify PR branch (feat/transcript-verify): the
+# host-side parser producing the span-table advice the transcript guest
+# verifies. Pinned to a rev — PR branches move.
+transcript-verify = { git = "https://github.com/0xtsukino/tlsn-utils", rev = "e12b14865fca8d7f0487f4d606842f05ff5bdf44" }
 regex-automata = "0.4"
 rayon = "1"
 
@@ -44,6 +48,7 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 regex-dfa-core = { version = "0.0.0", path = "../guests/regex-core" }
+transcript-core = { version = "0.0.0", path = "../guests/transcript-core" }
 
 [dev-dependencies]
 futures = "0.3"
@@ -52,3 +57,12 @@ wasm-bindgen-test = "0.3"
 [profile.release]
 opt-level = 3
 lto = true
+
+# Mirrors mpz's own [patch.crates-io]: cargo only honors patches in the
+# top-level workspace, so without this line the demo silently builds the
+# crates.io aes (scalar soft AES) while mpz's benchmarks assume the fork.
+# Fixsliced AES over v128 words on wasm32+simd128 (branch:
+# feat/aes-wasm-simd-word), ~2.6x faster — Ferret's cGGM expansion, CCR
+# hashes and PRG all sit on it. Re-check mpz's patch section on every bump.
+[patch.crates-io]
+aes = { git = "https://github.com/privacy-ethereum/block-ciphers", rev = "5e0ac41ab52a4c81f945d78a06d771c944c7d6b7" }

@@ -25,11 +25,30 @@ export type EmbeddedProgram =
   | "sha256"
   | "regex"
   | "luhn"
-  | "csv";
+  | "csv"
+  | "transcript";
+
+/// The embedded HTTPS-transcript fixture, parsed by the prover's worker
+/// with the transcript-verify host parser (off the VM).
+export interface TranscriptInfo {
+  sent: string;
+  recv: string;
+  method: string;
+  target: string;
+  host: string;
+  status: number;
+  /// Whether the request carries a body (covered as opaque private bytes).
+  reqBody: boolean;
+  /// Every scalar JSON path of the response body, with value previews.
+  paths: { path: string; value: string }[];
+}
 
 export type PartyRequest =
   | { type: "guest_info"; program: EmbeddedProgram }
   | { type: "inspect"; wasm: Uint8Array }
+  | { type: "transcript_info" }
+  // `expect` null = disclose the value; a string = assert equality.
+  | { type: "transcript_public"; path: string; expect: string | null }
   | {
       type: "run";
       role: Role;
@@ -71,6 +90,14 @@ export type PartyRequest =
       len: number;
       col: number; // public: both sides get them
       threshold: number;
+    }
+  | {
+      type: "run";
+      role: Role;
+      program: "transcript";
+      path: string; // the prover re-derives everything from these two
+      expect: string | null; // null = disclose, string = assert equality
+      words: Uint32Array; // the public table; all the verifier ever gets
     };
 
 /// One exported function of an inspected module.
@@ -86,7 +113,15 @@ export type PartyResponse =
   | { type: "done"; result: string; ms: number }
   | { type: "error"; message: string }
   | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string }
-  | { type: "exports"; exports?: ExportInfo[]; error?: string };
+  | { type: "exports"; exports?: ExportInfo[]; error?: string }
+  | { type: "transcript_info"; info?: TranscriptInfo; error?: string }
+  | {
+      type: "transcript_public";
+      path: string;
+      expect: string | null; // echoed so the page can match stale answers
+      words?: Uint32Array;
+      error?: string;
+    };
 
 const post = (msg: PartyResponse) => self.postMessage(msg);
 
@@ -118,6 +153,36 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
     post({ type: "guest_info", program: msg.program, size: bytes.length, sha256 });
+    return;
+  }
+  if (msg.type === "transcript_info") {
+    // The embedded fixture, parsed off the VM with the transcript-verify
+    // host parser — the page builds the claim line and path dropdown.
+    try {
+      post({ type: "transcript_info", info: JSON.parse(pkg.transcript_info()) });
+    } catch (e) {
+      post({ type: "transcript_info", error: e instanceof Error ? e.message : String(e) });
+    }
+    return;
+  }
+  if (msg.type === "transcript_public") {
+    // The flat public table for one claim: the page relays it to the
+    // verifier, which never touches the transcript bytes.
+    try {
+      post({
+        type: "transcript_public",
+        path: msg.path,
+        expect: msg.expect,
+        words: pkg.transcript_public_inputs(msg.path, msg.expect ?? undefined),
+      });
+    } catch (e) {
+      post({
+        type: "transcript_public",
+        path: msg.path,
+        expect: msg.expect,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
     return;
   }
   if (msg.type === "inspect") {
@@ -189,6 +254,12 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
             ? await pkg.prover_csv(port, msg.csv, msg.col, msg.threshold)
             : await pkg.verifier_csv(port, msg.len, msg.col, msg.threshold),
         );
+        break;
+      case "transcript":
+        result =
+          msg.role === "prover"
+            ? await pkg.prover_transcript(port, msg.path, msg.expect ?? undefined)
+            : await pkg.verifier_transcript(port, msg.words);
         break;
     }
     post({ type: "done", result, ms: performance.now() - start });

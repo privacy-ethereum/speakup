@@ -1,0 +1,25 @@
+# The flat span-table layout, the branch-free transcript verifier, and the
+# host-side encoder — shared by the transcript guest (which wraps the
+# verifier with VM buffers and the VCI reveal) and the host bindings (which
+# parse the fixture with transcript-verify, encode the table, and cross-check
+# the verifier natively). Deliberately free of mpz-vm-sys: linking that into
+# the host wasm would drag in unsatisfiable `vc.*` imports.
+#
+# transcript-verify is pulled in WITHOUT default features (no_std: types +
+# the reference validator only — no spansy/httparse). The encoder is unused
+# by the guest and stripped from its wasm by LTO.
+[package]
+name = "transcript-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+transcript-verify = { workspace = true }
+
+[dev-dependencies]
+# The tests parse synthesized exchanges with the real host-side parser.
+transcript-verify = { workspace = true, features = ["parse"] }

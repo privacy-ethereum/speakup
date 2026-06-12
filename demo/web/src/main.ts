@@ -5,6 +5,7 @@ import type {
   PartyRequest,
   PartyResponse,
   Role,
+  TranscriptInfo,
 } from "./party.worker";
 import "./style.css";
 
@@ -17,6 +18,8 @@ import regexSrc from "../../guests/regex/src/lib.rs?raw";
 import regexCoreSrc from "../../guests/regex-core/src/lib.rs?raw";
 import luhnSrc from "../../guests/luhn/src/lib.rs?raw";
 import csvSrc from "../../guests/csv/src/lib.rs?raw";
+import transcriptSrc from "../../guests/transcript/src/lib.rs?raw";
+import transcriptCoreSrc from "../../guests/transcript-core/src/lib.rs?raw";
 
 // One worker per party: two isolated wasm memories. The prover's secrets
 // physically cannot be in the verifier's address space. Spawned (and on
@@ -43,6 +46,12 @@ const paramRows = $("param-rows");
 const cardInput = $<HTMLInputElement>("card-input");
 const csvInput = $<HTMLTextAreaElement>("csv-input");
 const csvRow = $("csv-row");
+const transcriptInput = $<HTMLTextAreaElement>("transcript-input");
+const transcriptRow = $("transcript-row");
+const transcriptClaim = $("transcript-claim");
+const transcriptPath = $<HTMLSelectElement>("transcript-path");
+const transcriptMode = $<HTMLSelectElement>("transcript-mode");
+const transcriptExpect = $<HTMLInputElement>("transcript-expect");
 const colInput = $<HTMLInputElement>("col-input");
 const thresholdInput = $<HTMLInputElement>("threshold-input");
 const inputLabel = $("input-label");
@@ -77,6 +86,8 @@ type ProgramKey =
   | "regex"
   | "luhn"
   | "csv"
+  | "transcript"
+  | "ecdsa"
   | "custom";
 
 /// Today as the packed YYYYMMDD integer the age guest expects.
@@ -111,6 +122,22 @@ interface Program {
   render(result: string): { text: string; cls: string; log: string };
   secretName: string;
 }
+
+// --- transcript fixture state (filled by the prover worker's answers) ---
+
+let transcriptInfo: TranscriptInfo | null = null;
+/// The flat public table for the current claim, and the (path, expect)
+/// pair it was computed for (guards against running with a stale table).
+let transcriptWords: Uint32Array | null = null;
+let transcriptWordsKey = "";
+
+/// `null` = disclose mode; a string = assert the field equals it.
+const transcriptExpectValue = (): string | null =>
+  transcriptMode.value === "assert" ? transcriptExpect.value : null;
+const transcriptKey = () => {
+  const e = transcriptExpectValue();
+  return `${transcriptPath.value}\u0000${e === null ? "\u0000<disclose>" : e}`;
+};
 
 const PROGRAMS: Record<ProgramKey, Program> = {
   square: {
@@ -361,6 +388,119 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the document (contents, row count, and sum)",
   },
+  transcript: {
+    source: `fn verify_transcript(...) -> i32 {
+    // the public span table (parsed
+    // OUTSIDE the VM by transcript-verify)
+    // drives the walk; every private byte
+    // is checked at its claimed position,
+    // branch-free — incl. "field == expected"
+    reveal(ok) // or reveal_bytes(value)
+}`,
+    fullSource: {
+      title: "guests/transcript/src/lib.rs (+ transcript-core)",
+      code: `${transcriptSrc}\n// ───── guests/transcript-core/src/lib.rs ─────\n\n${transcriptCoreSrc}`,
+    },
+    module: "transcript",
+    input: transcriptInput,
+    inputLabel: "private transcript — a captured HTTPS exchange",
+    centerRow: transcriptRow,
+    requests() {
+      if (!transcriptInfo) return "the fixture is still loading — try again";
+      const path = transcriptPath.value;
+      if (!path) return "pick a JSON field";
+      const expect = transcriptExpectValue();
+      if (!transcriptWords || transcriptWordsKey !== transcriptKey()) {
+        return "public inputs still computing — try again";
+      }
+      return {
+        prover: {
+          type: "run",
+          role: "prover",
+          program: "transcript",
+          path,
+          expect,
+          words: new Uint32Array(),
+        },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "transcript",
+          path: "",
+          expect,
+          words: transcriptWords,
+        },
+      };
+    },
+    blind() {
+      if (!transcriptInfo) return "—";
+      const total = utf8len(transcriptInfo.sent) + utf8len(transcriptInfo.recv);
+      return `░░░░░░░░░░░░ (${total} bytes — structure public, contents hidden)`;
+    },
+    proverStage() {
+      const total = transcriptInfo
+        ? utf8len(transcriptInfo.sent) + utf8len(transcriptInfo.recv)
+        : 0;
+      return `staging private transcript (${total} bytes)`;
+    },
+    render(result) {
+      let parsed: { ok: number; value: string };
+      try {
+        parsed = JSON.parse(result);
+      } catch {
+        return { text: result, cls: "", log: `result: ${result}` };
+      }
+      const path = transcriptPath.value;
+      const expect = transcriptExpectValue();
+      if (parsed.ok === 1) {
+        return expect === null
+          ? {
+              text: `✓ ${path} = ${JSON.stringify(parsed.value)}`,
+              cls: "ok",
+              log: `proved the exchange and disclosed ${path} = ${JSON.stringify(parsed.value)}`,
+            }
+          : {
+              text: `✓ ${path} = ${JSON.stringify(expect)} — proven`,
+              cls: "ok",
+              log: `proved the exchange and that ${path} = ${JSON.stringify(expect)} — the value itself was never sent`,
+            };
+      }
+      return {
+        text: "✗ not proven",
+        cls: "no",
+        log:
+          expect === null
+            ? "the transcript does not match the claimed parse"
+            : `not proven: ${path} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
+      };
+    },
+    secretName: "the transcript (every header and field other than the claims)",
+  },
+  // Placeholder: no guest exists yet. The tab shows what's planned and the
+  // Run button explains itself; everything else (guest crate, bindings,
+  // worker plumbing) lands with the implementation.
+  ecdsa: {
+    source: `// coming soon
+//
+// fn verify(msg, sig, pubkey) -> i32 {
+//     // verify an ECDSA signature
+//     // INSIDE the zk-vm: prove a
+//     // private message carries a
+//     // valid signature, revealing
+//     // neither message nor signature
+//     reveal(ecdsa_verify(...))
+// }`,
+    inputLabel: "private message & signature",
+    requests() {
+      return "ecdsa is not implemented yet — coming soon";
+    },
+    blind: () => "—",
+    proverStage: () => "",
+    render(result) {
+      return { text: result, cls: "", log: `result: ${result}` };
+    },
+    secretName: "the message and signature",
+  },
   custom: {
     source: `// drop a compiled guest module
 // to inspect its exports`,
@@ -470,6 +610,10 @@ const selectProgram = (key: ProgramKey) => {
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
   verifierSource.textContent = p.source;
+  // The fixture is parsed once, lazily, by the prover's worker.
+  if (key === "transcript" && !transcriptInfo) {
+    workers.prover.postMessage({ type: "transcript_info" } satisfies PartyRequest);
+  }
   for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
   requestGuestInfo(p);
   if (key === "custom" && customInfoLine) {
@@ -621,6 +765,85 @@ wasmFileInput.addEventListener("change", () => {
   wasmFileInput.value = "";
 });
 funcSelect.addEventListener("change", buildParamRows);
+
+// --- transcript fixture plumbing ---
+
+/// Truncates a value preview for the dropdown.
+const preview = (v: string) => (v.length > 28 ? `${v.slice(0, 28)}…` : v);
+
+/// Asks the prover's worker for the flat public table of the selected
+/// claim (path + mode + expected value).
+const requestTranscriptWords = () => {
+  const path = transcriptPath.value;
+  if (!path) return;
+  transcriptWords = null;
+  workers.prover.postMessage({
+    type: "transcript_public",
+    path,
+    expect: transcriptExpectValue(),
+  } satisfies PartyRequest);
+};
+
+/// Prefills the expected-value input with the selected field's actual
+/// value (edit it to watch the proof legitimately fail).
+const prefillTranscriptExpect = () => {
+  const v = transcriptInfo?.paths.find((p) => p.path === transcriptPath.value);
+  if (v) transcriptExpect.value = v.value;
+  transcriptExpect.hidden = transcriptMode.value !== "assert";
+};
+
+/// The prover worker's answer to a `transcript_info` request: fill the
+/// fixture pane, the claim line, and the path dropdown.
+const onTranscriptInfo = (msg: { info?: TranscriptInfo; error?: string }) => {
+  if (!msg.info) {
+    transcriptClaim.textContent = `fixture failed to parse: ${msg.error ?? "unknown"}`;
+    return;
+  }
+  transcriptInfo = msg.info;
+  const info = msg.info;
+  transcriptInput.value = `${info.sent}\n${info.recv}`;
+  transcriptClaim.textContent =
+    `${info.method} ${info.target} → ${info.host} · response status ${info.status}` +
+    (info.reqBody ? " · request body hidden" : "");
+  transcriptPath.replaceChildren();
+  for (const p of info.paths) {
+    const opt = document.createElement("option");
+    opt.value = p.path;
+    opt.textContent = `${p.path} = ${JSON.stringify(preview(p.value))}`;
+    transcriptPath.append(opt);
+  }
+  const def = info.paths.find((p) => p.path === "id") ?? info.paths[0];
+  if (def) transcriptPath.value = def.path;
+  prefillTranscriptExpect();
+  requestTranscriptWords();
+  if (current === "transcript") blindCell.textContent = PROGRAMS.transcript.blind();
+};
+
+const onTranscriptPublic = (msg: {
+  path: string;
+  expect: string | null;
+  words?: Uint32Array;
+  error?: string;
+}) => {
+  // Stale answer for a claim the user has since changed.
+  if (msg.path !== transcriptPath.value || msg.expect !== transcriptExpectValue()) return;
+  if (!msg.words) {
+    log(proverLog, `public inputs failed: ${msg.error ?? "unknown"}`, "err");
+    return;
+  }
+  transcriptWords = msg.words;
+  transcriptWordsKey = transcriptKey();
+};
+
+transcriptPath.addEventListener("change", () => {
+  prefillTranscriptExpect();
+  requestTranscriptWords();
+});
+transcriptMode.addEventListener("change", () => {
+  transcriptExpect.hidden = transcriptMode.value !== "assert";
+  requestTranscriptWords();
+});
+transcriptExpect.addEventListener("input", requestTranscriptWords);
 
 // --- full-source modal ---
 
@@ -836,6 +1059,12 @@ const spawnWorker = (role: Role) => {
         break;
       case "exports":
         onExports(msg);
+        break;
+      case "transcript_info":
+        onTranscriptInfo(msg);
+        break;
+      case "transcript_public":
+        onTranscriptPublic(msg);
         break;
     }
   };

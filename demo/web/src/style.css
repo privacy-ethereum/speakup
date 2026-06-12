@@ -262,6 +262,37 @@ main {
   color: var(--muted);
 }
 .center-input .pair input { width: 100%; }
+/* Placeholder tabs for programs that aren't implemented yet. */
+.programs .soon {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+.center-input .claim {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  margin: 0.2rem 0 0.5rem;
+  word-break: break-all;
+}
+.center-input select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: #11151c;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+}
 
 .controls {
   width: 100%;
