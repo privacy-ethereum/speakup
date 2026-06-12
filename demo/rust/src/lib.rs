@@ -23,6 +23,10 @@
 //! - `luhn`: a private card number passes the Luhn checksum.
 //! - `csv`: one column of a private CSV document, parsed inside the VM,
 //!   averages at least a public threshold.
+//! - `json`: selective disclosure over a private JSON document — the
+//!   transcript pattern without the HTTP layers. The host parses the
+//!   document OUTSIDE the VM; the guest re-derives the node table
+//!   branch-free and asserts/discloses one value at a public path.
 //! - `transcript`: selective disclosure over a captured HTTPS exchange. The
 //!   transcript-verify PR's host parser produces a span table OUTSIDE the
 //!   VM; the guest re-derives it branch-free from the private bytes and
@@ -57,6 +61,7 @@ const SHA256_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sha256.wasm
 const REGEX_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/regex.wasm"));
 const LUHN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/luhn.wasm"));
 const CSV_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/csv.wasm"));
+const JSON_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/json.wasm"));
 const TRANSCRIPT_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/transcript.wasm"));
 
 // The transcript demo's fixture: exact wire bytes of one HTTPS exchange,
@@ -154,6 +159,7 @@ pub fn guest_wasm(program: &str) -> Result<Vec<u8>, JsError> {
         "regex" => REGEX_WASM,
         "luhn" => LUHN_WASM,
         "csv" => CSV_WASM,
+        "json" => JSON_WASM,
         "transcript" => TRANSCRIPT_WASM,
         _ => return Err(JsError::new(&format!("unknown program: {program}"))),
     };
@@ -1014,6 +1020,227 @@ pub async fn csv_zkvm(csv: String, col: i32, threshold: i32) -> Result<i32, JsEr
     Ok(rp)
 }
 
+// === json (selective disclosure over a private JSON document) ===
+//
+// The transcript pattern without the HTTP layers: the prover's document is
+// parsed OFF the VM — reusing the transcript-verify host parser through
+// `transcript_core::json::synth_exchange`, a minimal Content-Length-framed
+// wrapper that never enters the VM — the node table plus the path claim
+// are flat-encoded by `transcript_core::json::encode` and written into the
+// guest as public words, and the guest re-derives the whole JSON grammar
+// from the private bytes branch-free. The verifier learns the table (the
+// structure of the document), the claim, and the one disclosed value.
+
+/// Parses `doc` with the real transcript-verify host parser (via the
+/// synthetic exchange) into the upstream JSON node table, in document
+/// coordinates.
+fn json_nodes(doc: &str) -> Result<Vec<transcript_verify::JsonNode>, JsError> {
+    if doc.is_empty() {
+        return Err(JsError::new("the document is empty"));
+    }
+    if doc.len() > transcript_core::json::DOC_CAP {
+        return Err(JsError::new(&format!(
+            "document larger than {} bytes",
+            transcript_core::json::DOC_CAP
+        )));
+    }
+    let (sent, recv) = transcript_core::json::synth_exchange(doc.as_bytes());
+    let table = transcript_verify::parse_transcript(&sent, &recv)
+        .map_err(|e| JsError::new(&format!("parse: {e}")))?;
+    table
+        .response
+        .body
+        .and_then(|b| b.json)
+        .map(|j| j.nodes)
+        .ok_or_else(|| {
+            JsError::new("not valid JSON (this demo accepts plain RFC 8259 documents)")
+        })
+}
+
+/// Parses `doc` and flat-encodes the node table + claim for `path`:
+/// disclose the value when `expect` is `None`, otherwise assert it equals
+/// `expect` (0/1 only).
+fn json_encode(
+    doc: &str,
+    path: &str,
+    expect: Option<&str>,
+) -> Result<transcript_core::json::Encoded, JsError> {
+    let nodes = json_nodes(doc)?;
+    transcript_core::json::encode(doc.as_bytes(), &nodes, path, expect)
+        .map_err(|e| JsError::new(&e))
+}
+
+/// Facts about a document, as JSON for the page: every scalar path with a
+/// value preview, in document order — the page builds the path dropdown
+/// from this. Errors (not valid JSON, too large…) surface to the page.
+#[wasm_bindgen]
+pub fn json_info(doc: String) -> Result<String, JsError> {
+    let nodes = json_nodes(&doc)?;
+    let mut paths = Vec::new();
+    transcript_paths(&nodes, doc.as_bytes(), 0, "", &mut paths);
+    let paths_json = paths
+        .iter()
+        .map(|(p, v)| {
+            format!(
+                r#"{{"path":"{}","value":"{}"}}"#,
+                json_escape(p),
+                json_escape(v)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(format!(r#"{{"paths":[{}]}}"#, paths_json))
+}
+
+/// The flat public table for one claim — the page fetches this from the
+/// prover's worker and hands it to the verifier, which never sees the
+/// document bytes.
+#[wasm_bindgen]
+pub fn json_public_inputs(
+    doc: String,
+    path: String,
+    expect: Option<String>,
+) -> Result<Vec<u32>, JsError> {
+    Ok(json_encode(&doc, &path, expect.as_deref())?.words)
+}
+
+fn json_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32, u32), JsError> {
+    let table = expect_i32(vm.call_local(func(module, "table_ptr")?, vec![]).map_err(err)?)?;
+    let doc = expect_i32(vm.call_local(func(module, "doc_ptr")?, vec![]).map_err(err)?)?;
+    let out = expect_i32(vm.call_local(func(module, "out_ptr")?, vec![]).map_err(err)?)?;
+    Ok((table as u32, doc as u32, out as u32))
+}
+
+async fn json_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    doc: &[u8],
+    words: &[u32],
+) -> Result<String, JsError> {
+    let (table_ptr, doc_ptr, out_ptr) = json_ptrs(prover, module)?;
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    prover.write(table_ptr, Write::Public(&bytes)).map_err(err)?;
+    prover.write(doc_ptr, Write::Private(doc)).map_err(err)?;
+    let params = vec![
+        Param::Public(Value::I32(doc.len() as i32)),
+        Param::Public(Value::I32(words.len() as i32)),
+    ];
+    let ok = expect_i32(
+        prover
+            .call(ctx, func(module, "verify_json")?, params)
+            .await
+            .map_err(err)?,
+    )?;
+    let (_, out_len) = transcript_core::json::disclosure_span(words).map_err(err)?;
+    let value = if ok == 1 && out_len > 0 {
+        prover.read(out_ptr, out_len).map_err(err)?.to_vec()
+    } else {
+        Vec::new()
+    };
+    Ok(transcript_result(ok, &value))
+}
+
+async fn json_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    words: &[u32],
+) -> Result<String, JsError> {
+    let (table_ptr, doc_ptr, out_ptr) = json_ptrs(verifier, module)?;
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    verifier
+        .write(table_ptr, Write::Public(&bytes))
+        .map_err(err)?;
+    let doc_len = *words.get(transcript_core::json::W_DOC_LEN).unwrap_or(&0) as usize;
+    verifier.write(doc_ptr, Write::Blind(doc_len)).map_err(err)?;
+    let params = vec![
+        Param::Public(Value::I32(doc_len as i32)),
+        Param::Public(Value::I32(words.len() as i32)),
+    ];
+    let ok = expect_i32(
+        verifier
+            .call(ctx, func(module, "verify_json")?, params)
+            .await
+            .map_err(err)?,
+    )?;
+    let (_, out_len) = transcript_core::json::disclosure_span(words).map_err(err)?;
+    let value = if ok == 1 && out_len > 0 {
+        verifier.read(out_ptr, out_len).map_err(err)?.to_vec()
+    } else {
+        Vec::new()
+    };
+    Ok(transcript_result(ok, &value))
+}
+
+fn check_json_words(words: &[u32]) -> Result<(), JsError> {
+    if words.len() < transcript_core::json::HEADER_WORDS
+        || words.len() > transcript_core::TABLE_CAP_WORDS
+    {
+        return Err(JsError::new("public table size out of range"));
+    }
+    let doc_len = words[transcript_core::json::W_DOC_LEN] as usize;
+    if doc_len == 0 || doc_len > transcript_core::json::DOC_CAP {
+        return Err(JsError::new("document length out of range"));
+    }
+    transcript_core::json::disclosure_span(words).map_err(err)?;
+    Ok(())
+}
+
+/// Prover side of the json demo: parses the private `doc` with the
+/// transcript-verify host parser, proves it well-formed in the VM, and
+/// either discloses the JSON value at `path` (`expect = None`) or asserts
+/// it equals `expect`. Returns `{"ok":0|1,"value":"…"}` (empty value in
+/// assert mode).
+#[wasm_bindgen]
+pub async fn prover_json(
+    port: MessagePort,
+    doc: String,
+    path: String,
+    expect: Option<String>,
+) -> Result<String, JsError> {
+    let enc = json_encode(&doc, &path, expect.as_deref())?;
+    check_json_words(&enc.words)?;
+    let (mut prover, module) = prover_for(JSON_WASM)?;
+    let mut ctx = port_ctx(port)?;
+    json_prover_inner(&mut prover, &mut ctx, &module, doc.as_bytes(), &enc.words).await
+}
+
+/// Verifier side of the json demo. Receives only the public table (the
+/// structure of the document and the claim — never the bytes); learns the
+/// disclosed value iff every check passes.
+#[wasm_bindgen]
+pub async fn verifier_json(port: MessagePort, words: Vec<u32>) -> Result<String, JsError> {
+    check_json_words(&words)?;
+    let (mut verifier, module) = verifier_for(JSON_WASM)?;
+    let mut ctx = port_ctx(port)?;
+    json_verifier_inner(&mut verifier, &mut ctx, &module, &words).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn json_zkvm(
+    doc: String,
+    path: String,
+    expect: Option<String>,
+) -> Result<String, JsError> {
+    let enc = json_encode(&doc, &path, expect.as_deref())?;
+    check_json_words(&enc.words)?;
+    let (mut prover, module) = prover_for(JSON_WASM)?;
+    let (mut verifier, _) = verifier_for(JSON_WASM)?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        json_prover_inner(&mut prover, &mut ctx_p, &module, doc.as_bytes(), &enc.words),
+        json_verifier_inner(&mut verifier, &mut ctx_v, &module, &enc.words),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
 // === transcript (selective disclosure over a captured HTTPS exchange) ===
 //
 // The advice pattern from the transcript-verify PR, inverted for a zk-vm
@@ -1040,17 +1267,42 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+/// Parses the page's claim string: `json:<dot path>` (or a bare dot path)
+/// names a JSON body value, `req:<i>`/`resp:<i>` one header line.
+fn parse_claim(s: &str) -> Result<transcript_core::encode::Claim<'_>, JsError> {
+    use transcript_core::encode::Claim;
+    let index = |i: &str| {
+        i.parse()
+            .map_err(|_| JsError::new(&format!("bad header index: {i}")))
+    };
+    if let Some(path) = s.strip_prefix("json:") {
+        Ok(Claim::Json { path })
+    } else if let Some(i) = s.strip_prefix("req:") {
+        Ok(Claim::RequestHeader { index: index(i)? })
+    } else if let Some(i) = s.strip_prefix("resp:") {
+        Ok(Claim::ResponseHeader { index: index(i)? })
+    } else {
+        Ok(Claim::Json { path: s })
+    }
+}
+
 /// Parses the embedded fixture with the REAL transcript-verify host parser
-/// and flat-encodes the table + claims for `path`: disclose the value when
-/// `expect` is `None`, otherwise assert it equals `expect` (0/1 only).
+/// and flat-encodes the table + claims for `claim`: disclose the value
+/// when `expect` is `None`, otherwise assert it equals `expect` (0/1 only).
 fn transcript_encode(
-    path: &str,
+    claim: &str,
     expect: Option<&str>,
 ) -> Result<transcript_core::encode::Encoded, JsError> {
     let table = transcript_verify::parse_transcript(TRANSCRIPT_SENT, TRANSCRIPT_RECV)
         .map_err(|e| JsError::new(&format!("parse_transcript: {e}")))?;
-    transcript_core::encode::encode(TRANSCRIPT_SENT, TRANSCRIPT_RECV, &table, path, expect)
-        .map_err(|e| JsError::new(&e))
+    transcript_core::encode::encode_claim(
+        TRANSCRIPT_SENT,
+        TRANSCRIPT_RECV,
+        &table,
+        &parse_claim(claim)?,
+        expect,
+    )
+    .map_err(|e| JsError::new(&e))
 }
 
 /// Every scalar JSON path of the fixture's response body, with value
@@ -1139,8 +1391,23 @@ pub fn transcript_info() -> Result<String, JsError> {
         })
         .collect::<Vec<_>>()
         .join(",");
+    // The header lines of each side, in table (= wire) order — the page
+    // offers them as claimable fields alongside the JSON paths.
+    let headers_json = |headers: &[transcript_verify::HeaderSpan], buf: &[u8]| {
+        headers
+            .iter()
+            .map(|h| {
+                format!(
+                    r#"{{"name":"{}","value":"{}"}}"#,
+                    json_escape(&String::from_utf8_lossy(&buf[h.name.as_range()])),
+                    json_escape(&String::from_utf8_lossy(&buf[h.value.as_range()])),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     Ok(format!(
-        r#"{{"sent":"{}","recv":"{}","method":"{}","target":"{}","host":"{}","status":{},"reqBody":{},"paths":[{}]}}"#,
+        r#"{{"sent":"{}","recv":"{}","method":"{}","target":"{}","host":"{}","status":{},"reqBody":{},"paths":[{}],"reqHeaders":[{}],"respHeaders":[{}]}}"#,
         json_escape(&String::from_utf8_lossy(TRANSCRIPT_SENT)),
         json_escape(&String::from_utf8_lossy(TRANSCRIPT_RECV)),
         json_escape(&method),
@@ -1149,18 +1416,20 @@ pub fn transcript_info() -> Result<String, JsError> {
         status,
         req.body.is_some(),
         paths_json,
+        headers_json(&req.headers, TRANSCRIPT_SENT),
+        headers_json(&resp.headers, TRANSCRIPT_RECV),
     ))
 }
 
-/// The flat public table for `path` (and, in assert mode, the expected
+/// The flat public table for `claim` (and, in assert mode, the expected
 /// value) — the page fetches this from the prover's worker and hands it to
 /// the verifier, which never sees the transcript bytes.
 #[wasm_bindgen]
 pub fn transcript_public_inputs(
-    path: String,
+    claim: String,
     expect: Option<String>,
 ) -> Result<Vec<u32>, JsError> {
-    Ok(transcript_encode(&path, expect.as_deref())?.words)
+    Ok(transcript_encode(&claim, expect.as_deref())?.words)
 }
 
 fn transcript_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32, u32, u32), JsError> {
@@ -1272,18 +1541,18 @@ fn check_transcript_words(words: &[u32]) -> Result<(), JsError> {
     Ok(())
 }
 
-/// Prover side of the transcript demo: parses the embedded fixture with the
-/// transcript-verify host parser, proves it well-formed in the VM, and
-/// either discloses the JSON value at `path` (`expect = None`) or asserts
-/// it equals `expect`. Returns `{"ok":0|1,"value":"…"}` (empty value in
-/// assert mode).
+/// Prover side of the transcript demo: parses the embedded fixture with
+/// the transcript-verify host parser, proves it well-formed in the VM, and
+/// either discloses the claimed value — a JSON body field or one header —
+/// (`expect = None`) or asserts it equals `expect`. Returns
+/// `{"ok":0|1,"value":"…"}` (empty value in assert mode).
 #[wasm_bindgen]
 pub async fn prover_transcript(
     port: MessagePort,
-    path: String,
+    claim: String,
     expect: Option<String>,
 ) -> Result<String, JsError> {
-    let enc = transcript_encode(&path, expect.as_deref())?;
+    let enc = transcript_encode(&claim, expect.as_deref())?;
     check_transcript_words(&enc.words)?;
     let (mut prover, module) = prover_for(TRANSCRIPT_WASM)?;
     let mut ctx = port_ctx(port)?;
@@ -1303,8 +1572,8 @@ pub async fn verifier_transcript(port: MessagePort, words: Vec<u32>) -> Result<S
 
 /// Both parties in this instance (tests / reference).
 #[wasm_bindgen]
-pub async fn transcript_zkvm(path: String, expect: Option<String>) -> Result<String, JsError> {
-    let enc = transcript_encode(&path, expect.as_deref())?;
+pub async fn transcript_zkvm(claim: String, expect: Option<String>) -> Result<String, JsError> {
+    let enc = transcript_encode(&claim, expect.as_deref())?;
     check_transcript_words(&enc.words)?;
     let (mut prover, module) = prover_for(TRANSCRIPT_WASM)?;
     let (mut verifier, _) = verifier_for(TRANSCRIPT_WASM)?;

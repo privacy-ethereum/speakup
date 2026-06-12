@@ -10,7 +10,7 @@
 
 use transcript_verify::parse_transcript;
 
-use crate::encode::{Encoded, encode};
+use crate::encode::{Claim, Encoded, encode, encode_claim};
 use crate::{W_RESP_CL_IDX, W_STATUS, W_VALUE_NODE, verify};
 
 /// A small but structurally rich exchange: nested objects/arrays, escapes,
@@ -481,6 +481,193 @@ fn post_byte_flips_never_widen_the_accept_set() {
         r[i] ^= 0x01;
         if flat_accepts(&sent, &r, &enc.words) {
             assert!(upstream(&sent, &r), "flip at recv[{i}] ({:?})", recv[i] as char);
+        }
+    }
+}
+
+// === header claims (claim target 1/2) ===
+//
+// The sample's header lines: sent = Host(0), Accept(1), X-Empty(2),
+// X-Padded(3); recv = Content-Type(0), Content-Length(1).
+
+#[test]
+fn header_claims_disclose_and_assert() {
+    let (sent, recv) = sample();
+    let table = parse_transcript(&sent, &recv).unwrap();
+    // Disclose a response header.
+    let enc =
+        encode_claim(&sent, &recv, &table, &Claim::ResponseHeader { index: 0 }, None).unwrap();
+    let d = verify(&sent, &recv, &enc.words).unwrap();
+    assert_eq!((d.ok, d.value_in_sent), (1, false));
+    assert_eq!(
+        &recv[d.value_start..d.value_start + d.value_len],
+        b"application/json"
+    );
+    assert_eq!(
+        crate::disclosure_span(&enc.words).unwrap(),
+        (d.value_start, d.value_len)
+    );
+    // Disclose a request header: the value lives in `sent`.
+    let enc =
+        encode_claim(&sent, &recv, &table, &Claim::RequestHeader { index: 1 }, None).unwrap();
+    let d = verify(&sent, &recv, &enc.words).unwrap();
+    assert_eq!((d.ok, d.value_in_sent), (1, true));
+    assert_eq!(&sent[d.value_start..d.value_start + d.value_len], b"*/*");
+    // The canonically-trimmed X-Padded value (OWS excluded).
+    let enc =
+        encode_claim(&sent, &recv, &table, &Claim::RequestHeader { index: 3 }, None).unwrap();
+    let d = verify(&sent, &recv, &enc.words).unwrap();
+    assert_eq!(&sent[d.value_start..d.value_start + d.value_len], b"spaced out");
+    // An empty value discloses as empty (only the flag is revealed).
+    let enc =
+        encode_claim(&sent, &recv, &table, &Claim::RequestHeader { index: 2 }, None).unwrap();
+    let d = verify(&sent, &recv, &enc.words).unwrap();
+    assert_eq!((d.ok, d.value_len), (1, 0));
+    // Assert mode: the right value is proven with nothing disclosed; a
+    // wrong one encodes fine and legitimately fails.
+    let enc = encode_claim(
+        &sent,
+        &recv,
+        &table,
+        &Claim::ResponseHeader { index: 0 },
+        Some("application/json"),
+    )
+    .unwrap();
+    let d = verify(&sent, &recv, &enc.words).unwrap();
+    assert_eq!(
+        (d.ok, d.value_start, d.value_len, d.value_in_sent),
+        (1, 0, 0, false)
+    );
+    assert_eq!(crate::disclosure_span(&enc.words).unwrap(), (0, 0));
+    let enc = encode_claim(
+        &sent,
+        &recv,
+        &table,
+        &Claim::ResponseHeader { index: 0 },
+        Some("application/jsoX"),
+    )
+    .unwrap();
+    assert_eq!(ok_flag(&sent, &recv, &enc.words), 0);
+    // Out-of-range indices never encode.
+    assert!(encode_claim(&sent, &recv, &table, &Claim::ResponseHeader { index: 9 }, None).is_err());
+}
+
+#[test]
+fn header_claim_pins_name_and_value_and_frees_the_body() {
+    let (sent, recv) = sample();
+    let table = parse_transcript(&sent, &recv).unwrap();
+    let enc = encode_claim(
+        &sent,
+        &recv,
+        &table,
+        &Claim::ResponseHeader { index: 0 },
+        Some("application/json"),
+    )
+    .unwrap();
+    // The claimed header's name bytes are pinned (case-insensitively):
+    // renaming keeps the transcript well-formed but breaks the claim.
+    let pos = recv.windows(12).position(|w| w == b"Content-Type").unwrap();
+    let mut r = recv.clone();
+    r[pos] = b'K';
+    assert!(upstream_accepts(&sent, &r));
+    assert!(!flat_accepts(&sent, &r, &enc.words));
+    // ...but a case flip is fine: header names are case-insensitive.
+    let mut r = recv.clone();
+    r[pos] = b'c';
+    assert_eq!(ok_flag(&sent, &r, &enc.words), 1);
+    // The asserted value bytes are pinned.
+    let pos = recv.windows(16).position(|w| w == b"application/json").unwrap();
+    let mut r = recv.clone();
+    r[pos] = b'x';
+    assert!(!flat_accepts(&sent, &r, &enc.words));
+    // The JSON body is now covered opaquely: its bytes are unconstrained
+    // (here flipped to something that isn't even ASCII).
+    let pos = recv.windows(7).position(|w| w == b"\"ditto\"").unwrap();
+    let mut r = recv.clone();
+    r[pos + 1] = 0xFF;
+    assert_eq!(ok_flag(&sent, &r, &enc.words), 1);
+}
+
+#[test]
+fn header_claims_cover_non_json_bodies() {
+    let (sent, _) = sample();
+    let body = "<html>not json at all</html>";
+    let recv = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    )
+    .into_bytes();
+    let table = parse_transcript(&sent, &recv).unwrap();
+    assert!(table.response.body.as_ref().unwrap().json.is_none());
+    // A JSON claim cannot encode without a JSON body...
+    assert!(
+        encode(&sent, &recv, &table, "x", None)
+            .unwrap_err()
+            .contains("JSON")
+    );
+    // ...but a header claim can: the body is covered opaquely.
+    let enc = encode_claim(
+        &sent,
+        &recv,
+        &table,
+        &Claim::ResponseHeader { index: 0 },
+        Some("text/html"),
+    )
+    .unwrap();
+    assert_eq!(ok_flag(&sent, &recv, &enc.words), 1);
+    assert_eq!(enc.status, 200);
+}
+
+#[test]
+fn header_claim_byte_flips_never_widen_the_accept_set() {
+    let (sent, recv) = sample();
+    let mut table = parse_transcript(&sent, &recv).unwrap();
+    let enc =
+        encode_claim(&sent, &recv, &table, &Claim::ResponseHeader { index: 0 }, None).unwrap();
+    // Upstream reference with the response body claimed OPAQUE — the legal
+    // claim the flat table encodes for a header claim.
+    table.response.body.as_mut().unwrap().json = None;
+    let upstream = |s: &[u8], r: &[u8]| transcript_verify::validate(s, r, &table).is_ok();
+    for i in 0..sent.len() {
+        let mut s = sent.clone();
+        s[i] ^= 0x01;
+        if flat_accepts(&s, &recv, &enc.words) {
+            assert!(upstream(&s, &recv), "flip at sent[{i}] ({:?})", sent[i] as char);
+        }
+    }
+    for i in 0..recv.len() {
+        let mut r = recv.clone();
+        r[i] ^= 0x01;
+        if flat_accepts(&sent, &r, &enc.words) {
+            assert!(upstream(&sent, &r), "flip at recv[{i}] ({:?})", recv[i] as char);
+        }
+    }
+}
+
+#[test]
+fn header_claim_rejects_tampered_table_words() {
+    // The no-slack property for header-claim tables, in both modes. The
+    // claimed header (Content-Type) has a nonempty value, so even the
+    // mode flip 0→1 (disclose→assert with an empty expected string) is a
+    // length mismatch and rejects.
+    let (sent, recv) = sample();
+    let table = parse_transcript(&sent, &recv).unwrap();
+    for expect in [None, Some("application/json")] {
+        let enc =
+            encode_claim(&sent, &recv, &table, &Claim::ResponseHeader { index: 0 }, expect)
+                .unwrap();
+        for i in 0..enc.words.len() {
+            if i == crate::W_STR_BYTES {
+                continue; // sub-word padding slack, as in the JSON tests
+            }
+            let mut w = enc.words.clone();
+            w[i] = w[i].wrapping_add(1);
+            assert!(
+                !flat_accepts(&sent, &recv, &w),
+                "expect={expect:?}: table word {i} += 1 accepted (value {})",
+                enc.words[i]
+            );
         }
     }
 }

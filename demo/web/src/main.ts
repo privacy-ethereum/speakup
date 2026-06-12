@@ -18,6 +18,8 @@ import regexSrc from "../../guests/regex/src/lib.rs?raw";
 import regexCoreSrc from "../../guests/regex-core/src/lib.rs?raw";
 import luhnSrc from "../../guests/luhn/src/lib.rs?raw";
 import csvSrc from "../../guests/csv/src/lib.rs?raw";
+import jsonSrc from "../../guests/json/src/lib.rs?raw";
+import jsonCoreSrc from "../../guests/transcript-core/src/json.rs?raw";
 import transcriptSrc from "../../guests/transcript/src/lib.rs?raw";
 import transcriptCoreSrc from "../../guests/transcript-core/src/lib.rs?raw";
 
@@ -46,6 +48,12 @@ const paramRows = $("param-rows");
 const cardInput = $<HTMLInputElement>("card-input");
 const csvInput = $<HTMLTextAreaElement>("csv-input");
 const csvRow = $("csv-row");
+const jsonInput = $<HTMLTextAreaElement>("json-input");
+const jsonRow = $("json-row");
+const jsonClaim = $("json-claim");
+const jsonPath = $<HTMLSelectElement>("json-path");
+const jsonMode = $<HTMLSelectElement>("json-mode");
+const jsonExpect = $<HTMLInputElement>("json-expect");
 const transcriptInput = $<HTMLTextAreaElement>("transcript-input");
 const transcriptRow = $("transcript-row");
 const transcriptClaim = $("transcript-claim");
@@ -86,6 +94,7 @@ type ProgramKey =
   | "regex"
   | "luhn"
   | "csv"
+  | "json"
   | "transcript"
   | "ecdsa"
   | "custom";
@@ -122,6 +131,23 @@ interface Program {
   render(result: string): { text: string; cls: string; log: string };
   secretName: string;
 }
+
+// --- json document state (filled by the prover worker's answers) ---
+
+/// Scalar paths of the current document, or `null` while (re)parsing.
+let jsonPaths: { path: string; value: string }[] | null = null;
+/// The flat public table for the current claim, and the (doc, path,
+/// expect) triple it was computed for (guards against stale tables).
+let jsonWords: Uint32Array | null = null;
+let jsonWordsKey = "";
+
+/// `null` = disclose mode; a string = assert the field equals it.
+const jsonExpectValue = (): string | null =>
+  jsonMode.value === "assert" ? jsonExpect.value : null;
+const jsonKey = () => {
+  const e = jsonExpectValue();
+  return `${jsonInput.value}\u0000${jsonPath.value}\u0000${e === null ? "\u0000<disclose>" : e}`;
+};
 
 // --- transcript fixture state (filled by the prover worker's answers) ---
 
@@ -388,6 +414,91 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the document (contents, row count, and sum)",
   },
+  json: {
+    source: `fn verify_json(...) -> i32 {
+    // the public node table (parsed
+    // OUTSIDE the VM) drives the walk;
+    // every private byte is checked at
+    // its claimed position, branch-free
+    // — incl. "field == expected"
+    reveal(ok) // or reveal_bytes(value)
+}`,
+    fullSource: {
+      title: "guests/json/src/lib.rs (+ transcript-core/src/json.rs)",
+      code: `${jsonSrc}\n// ───── guests/transcript-core/src/json.rs ─────\n\n${jsonCoreSrc}`,
+    },
+    module: "json",
+    input: jsonInput,
+    inputLabel: "private JSON document — edit me",
+    centerRow: jsonRow,
+    requests() {
+      if (!jsonPaths) return "the document hasn't parsed yet — fix it and try again";
+      if (!jsonPaths.length) return "the document has no scalar fields to claim";
+      const path = jsonPath.value;
+      const expect = jsonExpectValue();
+      if (!jsonWords || jsonWordsKey !== jsonKey()) {
+        return "public inputs still computing — try again";
+      }
+      return {
+        prover: {
+          type: "run",
+          role: "prover",
+          program: "json",
+          doc: jsonInput.value,
+          path,
+          expect,
+          words: new Uint32Array(),
+        },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "json",
+          doc: "",
+          path: "",
+          expect,
+          words: jsonWords,
+        },
+      };
+    },
+    blind() {
+      const len = utf8len(jsonInput.value);
+      return `░░░░░░░░░░░░ (${len} bytes — structure public, contents hidden)`;
+    },
+    proverStage: () =>
+      `staging private JSON document (${utf8len(jsonInput.value)} bytes)`,
+    render(result) {
+      let parsed: { ok: number; value: string };
+      try {
+        parsed = JSON.parse(result);
+      } catch {
+        return { text: result, cls: "", log: `result: ${result}` };
+      }
+      const path = jsonPath.value || "(document root)";
+      const expect = jsonExpectValue();
+      if (parsed.ok === 1) {
+        return expect === null
+          ? {
+              text: `✓ ${path} = ${JSON.stringify(parsed.value)}`,
+              cls: "ok",
+              log: `proved the document and disclosed ${path} = ${JSON.stringify(parsed.value)}`,
+            }
+          : {
+              text: `✓ ${path} = ${JSON.stringify(expect)} — proven`,
+              cls: "ok",
+              log: `proved the document and that ${path} = ${JSON.stringify(expect)} — the value itself was never sent`,
+            };
+      }
+      return {
+        text: "✗ not proven",
+        cls: "no",
+        log:
+          expect === null
+            ? "the document does not match the claimed parse"
+            : `not proven: ${path} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
+      };
+    },
+    secretName: "the document (every field other than the claim)",
+  },
   transcript: {
     source: `fn verify_transcript(...) -> i32 {
     // the public span table (parsed
@@ -407,8 +518,8 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     centerRow: transcriptRow,
     requests() {
       if (!transcriptInfo) return "the fixture is still loading — try again";
-      const path = transcriptPath.value;
-      if (!path) return "pick a JSON field";
+      const claim = transcriptPath.value;
+      if (!claim) return "pick a field to claim";
       const expect = transcriptExpectValue();
       if (!transcriptWords || transcriptWordsKey !== transcriptKey()) {
         return "public inputs still computing — try again";
@@ -418,7 +529,7 @@ const PROGRAMS: Record<ProgramKey, Program> = {
           type: "run",
           role: "prover",
           program: "transcript",
-          path,
+          claim,
           expect,
           words: new Uint32Array(),
         },
@@ -426,7 +537,7 @@ const PROGRAMS: Record<ProgramKey, Program> = {
           type: "run",
           role: "verifier",
           program: "transcript",
-          path: "",
+          claim: "",
           expect,
           words: transcriptWords,
         },
@@ -450,19 +561,20 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       } catch {
         return { text: result, cls: "", log: `result: ${result}` };
       }
-      const path = transcriptPath.value;
+      const label =
+        transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value;
       const expect = transcriptExpectValue();
       if (parsed.ok === 1) {
         return expect === null
           ? {
-              text: `✓ ${path} = ${JSON.stringify(parsed.value)}`,
+              text: `✓ ${label} = ${JSON.stringify(parsed.value)}`,
               cls: "ok",
-              log: `proved the exchange and disclosed ${path} = ${JSON.stringify(parsed.value)}`,
+              log: `proved the exchange and disclosed ${label} = ${JSON.stringify(parsed.value)}`,
             }
           : {
-              text: `✓ ${path} = ${JSON.stringify(expect)} — proven`,
+              text: `✓ ${label} = ${JSON.stringify(expect)} — proven`,
               cls: "ok",
-              log: `proved the exchange and that ${path} = ${JSON.stringify(expect)} — the value itself was never sent`,
+              log: `proved the exchange and that ${label} = ${JSON.stringify(expect)} — the value itself was never sent`,
             };
       }
       return {
@@ -471,7 +583,7 @@ const PROGRAMS: Record<ProgramKey, Program> = {
         log:
           expect === null
             ? "the transcript does not match the claimed parse"
-            : `not proven: ${path} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
+            : `not proven: ${label} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
       };
     },
     secretName: "the transcript (every header and field other than the claims)",
@@ -614,6 +726,9 @@ const selectProgram = (key: ProgramKey) => {
   if (key === "transcript" && !transcriptInfo) {
     workers.prover.postMessage({ type: "transcript_info" } satisfies PartyRequest);
   }
+  // The (editable) document is parsed lazily on first entry; edits
+  // re-parse via the input listener.
+  if (key === "json" && !jsonPaths) requestJsonInfo();
   for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
   requestGuestInfo(p);
   if (key === "custom" && customInfoLine) {
@@ -766,20 +881,146 @@ wasmFileInput.addEventListener("change", () => {
 });
 funcSelect.addEventListener("change", buildParamRows);
 
-// --- transcript fixture plumbing ---
+// --- json document plumbing ---
 
 /// Truncates a value preview for the dropdown.
 const preview = (v: string) => (v.length > 28 ? `${v.slice(0, 28)}…` : v);
 
+/// Asks the prover's worker to (re)parse the document into scalar paths.
+const requestJsonInfo = () => {
+  jsonPaths = null;
+  jsonWords = null;
+  jsonClaim.textContent = "parsing…";
+  workers.prover.postMessage({
+    type: "json_info",
+    doc: jsonInput.value,
+  } satisfies PartyRequest);
+};
+
 /// Asks the prover's worker for the flat public table of the selected
-/// claim (path + mode + expected value).
+/// claim (document + path + mode + expected value).
+const requestJsonWords = () => {
+  jsonWords = null;
+  workers.prover.postMessage({
+    type: "json_public",
+    doc: jsonInput.value,
+    path: jsonPath.value,
+    expect: jsonExpectValue(),
+  } satisfies PartyRequest);
+};
+
+/// Prefills the expected-value input with the selected field's actual
+/// value (edit it to watch the proof legitimately fail).
+const prefillJsonExpect = () => {
+  const v = jsonPaths?.find((p) => p.path === jsonPath.value);
+  if (v) jsonExpect.value = v.value;
+  jsonExpect.hidden = jsonMode.value !== "assert";
+};
+
+/// The prover worker's answer to a `json_info` request: fill the claim
+/// line and the path dropdown, keeping the selection where possible.
+const onJsonInfo = (msg: {
+  doc: string;
+  paths?: { path: string; value: string }[];
+  error?: string;
+}) => {
+  // Stale answer for a document the user has since edited.
+  if (msg.doc !== jsonInput.value) return;
+  if (!msg.paths) {
+    jsonClaim.textContent = `✗ ${msg.error ?? "the document failed to parse"}`;
+    jsonPath.replaceChildren();
+    return;
+  }
+  jsonPaths = msg.paths;
+  jsonClaim.textContent =
+    `valid JSON · ${utf8len(msg.doc)} bytes · ` +
+    `${msg.paths.length} scalar field${msg.paths.length === 1 ? "" : "s"}`;
+  const previous = jsonPath.value;
+  jsonPath.replaceChildren();
+  for (const p of msg.paths) {
+    const opt = document.createElement("option");
+    opt.value = p.path;
+    opt.textContent = `${p.path || "(document root)"} = ${JSON.stringify(preview(p.value))}`;
+    jsonPath.append(opt);
+  }
+  const def =
+    msg.paths.find((p) => p.path === previous) ??
+    msg.paths.find((p) => p.path === "accounts.CHF") ??
+    msg.paths[0];
+  if (def) jsonPath.value = def.path;
+  prefillJsonExpect();
+  if (msg.paths.length) requestJsonWords();
+  if (current === "json") blindCell.textContent = PROGRAMS.json.blind();
+};
+
+const onJsonPublic = (msg: {
+  doc: string;
+  path: string;
+  expect: string | null;
+  words?: Uint32Array;
+  error?: string;
+}) => {
+  // Stale answer for a claim the user has since changed.
+  if (
+    msg.doc !== jsonInput.value ||
+    msg.path !== jsonPath.value ||
+    msg.expect !== jsonExpectValue()
+  ) {
+    return;
+  }
+  if (!msg.words) {
+    log(proverLog, `public inputs failed: ${msg.error ?? "unknown"}`, "err");
+    return;
+  }
+  jsonWords = msg.words;
+  jsonWordsKey = jsonKey();
+};
+
+jsonInput.addEventListener("input", () => {
+  requestJsonInfo();
+  blindCell.textContent = PROGRAMS.json.blind();
+});
+jsonPath.addEventListener("change", () => {
+  prefillJsonExpect();
+  requestJsonWords();
+});
+jsonMode.addEventListener("change", () => {
+  jsonExpect.hidden = jsonMode.value !== "assert";
+  requestJsonWords();
+});
+jsonExpect.addEventListener("input", requestJsonWords);
+
+// --- transcript fixture plumbing ---
+
+/// Resolves the selected claim string (`json:<path>`, `req:<i>`,
+/// `resp:<i>`) to a display label and the claimed field's actual value
+/// (for prefilling the expected-value input).
+const transcriptClaimInfo = (
+  claim: string,
+): { label: string; value: string } | null => {
+  if (!transcriptInfo) return null;
+  if (claim.startsWith("req:") || claim.startsWith("resp:")) {
+    const req = claim.startsWith("req:");
+    const list = req ? transcriptInfo.reqHeaders : transcriptInfo.respHeaders;
+    const h = list[Number(claim.slice(claim.indexOf(":") + 1))];
+    return h
+      ? { label: `${req ? "request" : "response"} header ${h.name}`, value: h.value }
+      : null;
+  }
+  const path = claim.startsWith("json:") ? claim.slice(5) : claim;
+  const p = transcriptInfo.paths.find((x) => x.path === path);
+  return p ? { label: path, value: p.value } : null;
+};
+
+/// Asks the prover's worker for the flat public table of the selected
+/// claim (field + mode + expected value).
 const requestTranscriptWords = () => {
-  const path = transcriptPath.value;
-  if (!path) return;
+  const claim = transcriptPath.value;
+  if (!claim) return;
   transcriptWords = null;
   workers.prover.postMessage({
     type: "transcript_public",
-    path,
+    claim,
     expect: transcriptExpectValue(),
   } satisfies PartyRequest);
 };
@@ -787,7 +1028,7 @@ const requestTranscriptWords = () => {
 /// Prefills the expected-value input with the selected field's actual
 /// value (edit it to watch the proof legitimately fail).
 const prefillTranscriptExpect = () => {
-  const v = transcriptInfo?.paths.find((p) => p.path === transcriptPath.value);
+  const v = transcriptClaimInfo(transcriptPath.value);
   if (v) transcriptExpect.value = v.value;
   transcriptExpect.hidden = transcriptMode.value !== "assert";
 };
@@ -805,28 +1046,60 @@ const onTranscriptInfo = (msg: { info?: TranscriptInfo; error?: string }) => {
   transcriptClaim.textContent =
     `${info.method} ${info.target} → ${info.host} · response status ${info.status}` +
     (info.reqBody ? " · request body hidden" : "");
+  // One grouped dropdown of claimable fields: the response body's JSON
+  // paths plus each side's header lines.
   transcriptPath.replaceChildren();
-  for (const p of info.paths) {
-    const opt = document.createElement("option");
-    opt.value = p.path;
-    opt.textContent = `${p.path} = ${JSON.stringify(preview(p.value))}`;
-    transcriptPath.append(opt);
+  const addGroup = (label: string, items: { value: string; text: string }[]) => {
+    if (!items.length) return;
+    const group = document.createElement("optgroup");
+    group.label = label;
+    for (const it of items) {
+      const opt = document.createElement("option");
+      opt.value = it.value;
+      opt.textContent = it.text;
+      group.append(opt);
+    }
+    transcriptPath.append(group);
+  };
+  addGroup(
+    "response body (JSON)",
+    info.paths.map((p) => ({
+      value: `json:${p.path}`,
+      text: `${p.path} = ${JSON.stringify(preview(p.value))}`,
+    })),
+  );
+  addGroup(
+    "request headers",
+    info.reqHeaders.map((h, i) => ({
+      value: `req:${i}`,
+      text: `${h.name}: ${preview(h.value)}`,
+    })),
+  );
+  addGroup(
+    "response headers",
+    info.respHeaders.map((h, i) => ({
+      value: `resp:${i}`,
+      text: `${h.name}: ${preview(h.value)}`,
+    })),
+  );
+  if (info.paths.some((p) => p.path === "id")) {
+    transcriptPath.value = "json:id";
+  } else if (transcriptPath.options.length) {
+    transcriptPath.value = transcriptPath.options[0].value;
   }
-  const def = info.paths.find((p) => p.path === "id") ?? info.paths[0];
-  if (def) transcriptPath.value = def.path;
   prefillTranscriptExpect();
   requestTranscriptWords();
   if (current === "transcript") blindCell.textContent = PROGRAMS.transcript.blind();
 };
 
 const onTranscriptPublic = (msg: {
-  path: string;
+  claim: string;
   expect: string | null;
   words?: Uint32Array;
   error?: string;
 }) => {
   // Stale answer for a claim the user has since changed.
-  if (msg.path !== transcriptPath.value || msg.expect !== transcriptExpectValue()) return;
+  if (msg.claim !== transcriptPath.value || msg.expect !== transcriptExpectValue()) return;
   if (!msg.words) {
     log(proverLog, `public inputs failed: ${msg.error ?? "unknown"}`, "err");
     return;
@@ -1065,6 +1338,12 @@ const spawnWorker = (role: Role) => {
         break;
       case "transcript_public":
         onTranscriptPublic(msg);
+        break;
+      case "json_info":
+        onJsonInfo(msg);
+        break;
+      case "json_public":
+        onJsonPublic(msg);
         break;
     }
   };

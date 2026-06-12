@@ -10,6 +10,7 @@ members = [
     "regex-core",
     "luhn",
     "csv",
+    "json",
     "transcript",
     "transcript-core",
 ]

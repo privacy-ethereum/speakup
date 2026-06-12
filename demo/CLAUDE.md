@@ -1,7 +1,7 @@
 # Speakup demo — working notes
 
 Browser demo of Speakup (the mpz zk-vm): prover and verifier in separate web
-workers, real OT stack, seven example guests. See README.md for the
+workers, real OT stack, eight example guests. See README.md for the
 user-facing picture; this file is for working on the code.
 
 ## Build & test
@@ -118,7 +118,15 @@ regex table and CSV column index rely on this.
   zeros unless the symbolic ok flag holds — reveals can't be skipped on a
   private condition, but CAN be skipped on the public mode). Request
   bodies are covered as opaque private bytes (framing pinned via the CL
-  digits, contents unconstrained). `transcript-core` holds the layout
+  digits, contents unconstrained). Table v2 adds claim TARGETS
+  (`W_CLAIM_TARGET`): besides the JSON body value, the claim can name one
+  header line (`req:<i>`/`resp:<i>` claim strings from the UI; index +
+  lowercase name public, name pinned case-insensitively, value through
+  the same assert/disclose machinery — `Disclosure::value_in_sent` tells
+  the guest which buffer to mask from). With a header claim the JSON
+  section must be empty and the response body is covered opaquely like
+  request bodies — non-JSON exchanges (HTML etc.) become provable. Unused
+  claim words are pinned to 0 in either mode (no-slack property). `transcript-core` holds the layout
   consts, the verifier (`verify`), the encoder (which self-checks every
   encoding), and the tests — including exhaustive byte-flip differentials
   against the real upstream `validate` (for request bodies: against the
@@ -132,6 +140,24 @@ regex table and CSV column index rely on this.
   as an arm — early-return on Err instead (concrete path, both parties
   take it identically). Every table word is pinned (unused words must be
   0) so the tampered-word tests stay exhaustive.
+- The json guest (`guests/json`) is the transcript pattern minus HTTP: the
+  private input is one user-editable JSON document; the flat table
+  (`transcript_core::json`, its own compact header — nodes + path + claim
+  only) drives the same shared walk (`verify_json_claim`, extracted from
+  the transcript verifier — both formats accept the identical byte-level
+  JSON language, and the transcript differential tests cover the shared
+  code). Host-side parsing of arbitrary documents reuses the upstream
+  parser via `json::synth_exchange`, a minimal CL-framed wrapper that
+  never enters the VM (upstream emits JSON nodes only for
+  `application/json` bodies, hence the synthetic Content-Type). The
+  default document in web/index.html mirrors tlsn-extension's swissbank
+  demo fixture (servers/swissbank/src/data/swissbankdata.json — the data
+  behind swissbank.plugin.ts; fake demo data, so inlining it is fine);
+  default claim `accounts.CHF`, default mode disclose, matching the
+  plugin's reveal handlers. Unlike the transcript tab the textarea is
+  editable: every edit re-requests `json_info` (paths) and `json_public`
+  (words) from the prover worker, with the doc echoed back in each
+  response so stale answers are dropped.
 - Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
   button (default off, undecided whether it ships). The WAT editor was
   replaced by the "custom wasm" tab (default on): drop a compiled guest,

@@ -26,6 +26,7 @@ export type EmbeddedProgram =
   | "regex"
   | "luhn"
   | "csv"
+  | "json"
   | "transcript";
 
 /// The embedded HTTPS-transcript fixture, parsed by the prover's worker
@@ -41,14 +42,21 @@ export interface TranscriptInfo {
   reqBody: boolean;
   /// Every scalar JSON path of the response body, with value previews.
   paths: { path: string; value: string }[];
+  /// The header lines of each side, in wire order — claimable as
+  /// `req:<i>` / `resp:<i>` claim strings.
+  reqHeaders: { name: string; value: string }[];
+  respHeaders: { name: string; value: string }[];
 }
 
 export type PartyRequest =
   | { type: "guest_info"; program: EmbeddedProgram }
   | { type: "inspect"; wasm: Uint8Array }
   | { type: "transcript_info" }
+  // `claim` is `json:<path>`, `req:<i>`, or `resp:<i>`;
   // `expect` null = disclose the value; a string = assert equality.
-  | { type: "transcript_public"; path: string; expect: string | null }
+  | { type: "transcript_public"; claim: string; expect: string | null }
+  | { type: "json_info"; doc: string }
+  | { type: "json_public"; doc: string; path: string; expect: string | null }
   | {
       type: "run";
       role: Role;
@@ -94,8 +102,17 @@ export type PartyRequest =
   | {
       type: "run";
       role: Role;
+      program: "json";
+      doc: string; // empty on the verifier side
+      path: string; // the prover re-derives everything from doc+path+expect
+      expect: string | null; // null = disclose, string = assert equality
+      words: Uint32Array; // the public table; all the verifier ever gets
+    }
+  | {
+      type: "run";
+      role: Role;
       program: "transcript";
-      path: string; // the prover re-derives everything from these two
+      claim: string; // the prover re-derives everything from these two
       expect: string | null; // null = disclose, string = assert equality
       words: Uint32Array; // the public table; all the verifier ever gets
     };
@@ -117,8 +134,22 @@ export type PartyResponse =
   | { type: "transcript_info"; info?: TranscriptInfo; error?: string }
   | {
       type: "transcript_public";
-      path: string;
+      claim: string;
       expect: string | null; // echoed so the page can match stale answers
+      words?: Uint32Array;
+      error?: string;
+    }
+  | {
+      type: "json_info";
+      doc: string; // echoed so the page can match stale answers
+      paths?: { path: string; value: string }[];
+      error?: string;
+    }
+  | {
+      type: "json_public";
+      doc: string;
+      path: string;
+      expect: string | null;
       words?: Uint32Array;
       error?: string;
     };
@@ -171,13 +202,52 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
     try {
       post({
         type: "transcript_public",
-        path: msg.path,
+        claim: msg.claim,
         expect: msg.expect,
-        words: pkg.transcript_public_inputs(msg.path, msg.expect ?? undefined),
+        words: pkg.transcript_public_inputs(msg.claim, msg.expect ?? undefined),
       });
     } catch (e) {
       post({
         type: "transcript_public",
+        claim: msg.claim,
+        expect: msg.expect,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    return;
+  }
+  if (msg.type === "json_info") {
+    // The user's document, parsed off the VM with the transcript-verify
+    // host parser — the page builds the path dropdown from the answer.
+    try {
+      const parsed = JSON.parse(pkg.json_info(msg.doc)) as {
+        paths: { path: string; value: string }[];
+      };
+      post({ type: "json_info", doc: msg.doc, paths: parsed.paths });
+    } catch (e) {
+      post({
+        type: "json_info",
+        doc: msg.doc,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    return;
+  }
+  if (msg.type === "json_public") {
+    // The flat public table for one claim: the page relays it to the
+    // verifier, which never touches the document bytes.
+    try {
+      post({
+        type: "json_public",
+        doc: msg.doc,
+        path: msg.path,
+        expect: msg.expect,
+        words: pkg.json_public_inputs(msg.doc, msg.path, msg.expect ?? undefined),
+      });
+    } catch (e) {
+      post({
+        type: "json_public",
+        doc: msg.doc,
         path: msg.path,
         expect: msg.expect,
         error: e instanceof Error ? e.message : String(e),
@@ -255,10 +325,16 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
             : await pkg.verifier_csv(port, msg.len, msg.col, msg.threshold),
         );
         break;
+      case "json":
+        result =
+          msg.role === "prover"
+            ? await pkg.prover_json(port, msg.doc, msg.path, msg.expect ?? undefined)
+            : await pkg.verifier_json(port, msg.words);
+        break;
       case "transcript":
         result =
           msg.role === "prover"
-            ? await pkg.prover_transcript(port, msg.path, msg.expect ?? undefined)
+            ? await pkg.prover_transcript(port, msg.claim, msg.expect ?? undefined)
             : await pkg.verifier_transcript(port, msg.words);
         break;
     }

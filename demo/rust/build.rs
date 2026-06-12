@@ -13,6 +13,7 @@ const GUESTS: &[(&str, &str)] = &[
     ("regex_guest.wasm", "regex.wasm"),
     ("luhn_guest.wasm", "luhn.wasm"),
     ("csv_guest.wasm", "csv.wasm"),
+    ("json_guest.wasm", "json.wasm"),
     ("transcript_guest.wasm", "transcript.wasm"),
 ];
 
@@ -37,6 +38,7 @@ fn main() {
         "regex-core",
         "luhn",
         "csv",
+        "json",
         "transcript",
         "transcript-core",
         "Cargo.toml",

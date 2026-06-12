@@ -6,9 +6,9 @@
 
 use wasm_bindgen_test::*;
 use zkvm_demo::{
-    age_zkvm, build_table, csv_zkvm, custom_zkvm, guest_wasm, luhn_zkvm, module_exports,
-    prover_square, regex_zkvm, sha256_zkvm, square_zkvm, transcript_info, transcript_zkvm,
-    verifier_square,
+    age_zkvm, build_table, csv_zkvm, custom_zkvm, guest_wasm, json_info, json_zkvm, luhn_zkvm,
+    module_exports, prover_square, regex_zkvm, sha256_zkvm, square_zkvm, transcript_info,
+    transcript_zkvm, verifier_square,
 };
 
 // A dedicated worker, not the page: rayon's parallel sections block the
@@ -122,6 +122,32 @@ async fn custom_module_runs_in_browser() {
 }
 
 #[wasm_bindgen_test]
+async fn json_runs_in_browser() {
+    init_threads().await;
+    // The swiss-bank shape from tlsn-extension's demo fixture.
+    let doc = r#"{"bank":"Swiss Bank","account_id":"ETH-042","accounts":{"CHF":"50_000_000"}}"#;
+    // Assert mode: prove the CHF balance without revealing the document.
+    let out = json_zkvm(doc.into(), "accounts.CHF".into(), Some("50_000_000".into()))
+        .await
+        .unwrap();
+    assert_eq!(out, r#"{"ok":1,"value":""}"#);
+    // A wrong expected value encodes fine but legitimately fails to prove.
+    let out = json_zkvm(doc.into(), "accounts.CHF".into(), Some("90_000_000".into()))
+        .await
+        .unwrap();
+    assert_eq!(out, r#"{"ok":0,"value":""}"#);
+    // Disclose mode: reveal the value at the path.
+    let out = json_zkvm(doc.into(), "account_id".into(), None).await.unwrap();
+    assert_eq!(out, r#"{"ok":1,"value":"ETH-042"}"#);
+    // The info JSON drives the page's path dropdown.
+    let info = json_info(doc.into()).unwrap();
+    assert!(info.contains(r#""path":"accounts.CHF""#), "{info}");
+    // Bad inputs fail before the protocol runs.
+    assert!(json_zkvm(doc.into(), "no.such.path".into(), None).await.is_err());
+    assert!(json_zkvm("not json".into(), "".into(), None).await.is_err());
+}
+
+#[wasm_bindgen_test]
 async fn transcript_runs_in_browser() {
     init_threads().await;
     // Assert mode: prove the API assigned id 101 (transcript-verify's
@@ -142,6 +168,15 @@ async fn transcript_runs_in_browser() {
     assert!(info.contains(r#""status":201"#), "{info}");
     // Paths that don't resolve to a scalar fail before the protocol runs.
     assert!(transcript_zkvm("no.such.path".into(), None).await.is_err());
+    // Header claims: disclose one header from each side over the real
+    // protocol (the request-header value is masked out of `sent`).
+    assert!(info.contains(r#""respHeaders":["#), "{info}");
+    let out = transcript_zkvm("resp:0".into(), None).await.unwrap();
+    assert!(out.starts_with(r#"{"ok":1,"value":""#), "{out}");
+    let out = transcript_zkvm("req:0".into(), None).await.unwrap();
+    assert!(out.starts_with(r#"{"ok":1,"value":""#), "{out}");
+    // An out-of-range header index fails before the protocol runs.
+    assert!(transcript_zkvm("resp:99".into(), None).await.is_err());
 }
 
 #[wasm_bindgen_test]

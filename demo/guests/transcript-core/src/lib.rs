@@ -42,9 +42,12 @@
 use core::hint::black_box;
 
 pub mod encode;
+pub mod json;
 
 /// Flat-table format version (independent of upstream's `FORMAT_VERSION`).
-pub const VERSION: u32 = 1;
+/// v2: claim targets — the claim may name one header line instead of a
+/// JSON body value, in which case the response body is covered opaquely.
+pub const VERSION: u32 = 2;
 
 /// Maximum private request buffer size.
 pub const SENT_CAP: usize = 1024;
@@ -105,11 +108,25 @@ pub const W_CLAIM_MODE: usize = 30;
 /// The expected-value string (assert mode; must be 0/0 in disclose mode).
 pub const W_EXPECT_SOFF: usize = 31;
 pub const W_EXPECT_SLEN: usize = 32;
+/// What the claim targets: a JSON body value ([`TARGET_JSON`]) or one
+/// header line ([`TARGET_REQ_HEADER`]/[`TARGET_RESP_HEADER`]). With a
+/// header target the JSON section must be empty (the response body is
+/// covered as opaque private bytes, like request bodies).
+pub const W_CLAIM_TARGET: usize = 33;
+/// Header-claim words (must all be 0 for a JSON claim): the claimed
+/// line's index on its side, and the public header name (lowercase).
+pub const W_HDR_IDX: usize = 34;
+pub const W_HDR_NAME_SOFF: usize = 35;
+pub const W_HDR_NAME_SLEN: usize = 36;
 /// Number of fixed header words; the variable sections follow.
-pub const HEADER_WORDS: usize = 33;
+pub const HEADER_WORDS: usize = 37;
 
 pub const MODE_DISCLOSE: usize = 0;
 pub const MODE_ASSERT: usize = 1;
+
+pub const TARGET_JSON: usize = 0;
+pub const TARGET_REQ_HEADER: usize = 1;
+pub const TARGET_RESP_HEADER: usize = 2;
 
 // JSON node kinds — numbering matches `transcript_verify::JsonKind`.
 pub const KIND_NULL: usize = 0;
@@ -121,14 +138,19 @@ pub const KIND_OBJECT: usize = 5;
 pub const KIND_ARRAY: usize = 6;
 
 /// The verification outcome: a symbolic 0/1 validity flag plus the
-/// (public) span of the value to disclose, in `recv` coordinates.
+/// (public) span of the value to disclose.
 pub struct Disclosure {
     /// 1 iff every private byte check passed. Symbolic in the VM.
     pub ok: i32,
-    /// First byte of the disclosed value's content.
+    /// First byte of the disclosed value's content, in `sent` coordinates
+    /// when `value_in_sent` (a request-header claim), else in
+    /// `recv`/document coordinates.
     pub value_start: usize,
     /// Content length in bytes (`<=` [`OUT_CAP`]).
     pub value_len: usize,
+    /// Whether the disclosed bytes live in the request buffer. Concrete —
+    /// derived from the public claim target, identical on both parties.
+    pub value_in_sent: bool,
 }
 
 // === pinned-flag helpers ===
@@ -404,25 +426,48 @@ fn str_slice(
 }
 
 /// The (public) disclosed-value content span recorded in a flat table:
-/// `(start, len)` in `recv` coordinates — `(0, 0)` in assert mode, where
-/// nothing is revealed but the flag. Both hosts use it to size the readback
-/// of the guest's revealed output buffer; [`verify`] re-derives and fully
-/// checks the same span in the VM.
+/// `(start, len)` in the claimed buffer's coordinates — `(0, 0)` in assert
+/// mode, where nothing is revealed but the flag. Both hosts use it to size
+/// the readback of the guest's revealed output buffer; [`verify`]
+/// re-derives and fully checks the same span in the VM.
 pub fn disclosure_span(table: &[u32]) -> Result<(usize, usize), &'static str> {
     if gw(table, W_CLAIM_MODE)? == MODE_ASSERT {
         return Ok((0, 0));
     }
-    let nodes_off = gw(table, W_NODES_OFF)?;
-    let n_nodes = gw(table, W_N_NODES)?;
-    let v = gw(table, W_VALUE_NODE)?;
-    if v >= n_nodes {
-        return Err("value node out of range");
+    match gw(table, W_CLAIM_TARGET)? {
+        TARGET_JSON => {
+            let nodes_off = gw(table, W_NODES_OFF)?;
+            let n_nodes = gw(table, W_N_NODES)?;
+            let v = gw(table, W_VALUE_NODE)?;
+            if v >= n_nodes {
+                return Err("value node out of range");
+            }
+            let nd = get_node(table, nodes_off, v)?;
+            if nd.end < nd.start || nd.end - nd.start > OUT_CAP {
+                return Err("value span invalid");
+            }
+            Ok((nd.start, nd.end - nd.start))
+        }
+        t @ (TARGET_REQ_HEADER | TARGET_RESP_HEADER) => {
+            let (off_w, n_w) = if t == TARGET_REQ_HEADER {
+                (W_REQ_HDRS_OFF, W_REQ_N_HDRS)
+            } else {
+                (W_RESP_HDRS_OFF, W_RESP_N_HDRS)
+            };
+            let idx = gw(table, W_HDR_IDX)?;
+            if idx >= gw(table, n_w)? {
+                return Err("claimed header index out of range");
+            }
+            let off = gw(table, off_w)?;
+            let vs = gw(table, off + 4 * idx + 2)?;
+            let ve = gw(table, off + 4 * idx + 3)?;
+            if ve < vs || ve - vs > OUT_CAP {
+                return Err("value span invalid");
+            }
+            Ok((vs, ve - vs))
+        }
+        _ => Err("unknown claim target"),
     }
-    let nd = get_node(table, nodes_off, v)?;
-    if nd.end < nd.start || nd.end - nd.start > OUT_CAP {
-        return Err("value span invalid");
-    }
-    Ok((nd.start, nd.end - nd.start))
 }
 
 #[derive(Clone, Copy, Default)]
@@ -793,14 +838,167 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
     }
     bad = bb(bad | f(host_count >= 2));
 
-    // === JSON body: the spans drive a concrete walk, the bytes are checked
-    // at every claimed position, and the gaps tile everything between ===
-    let n_nodes = gw(table, W_N_NODES)?;
-    let nodes_off = gw(table, W_NODES_OFF)?;
-    if n_nodes == 0 {
-        return Err("the response body must be claimed as JSON");
-    }
-    let body_end = recv.len();
+    // === the claim: a JSON body value (the shared section, crate::json)
+    // or one publicly-named header line ===
+    let target = gw(table, W_CLAIM_TARGET)?;
+    let (value_start, value_len, value_in_sent) = match target {
+        TARGET_JSON => {
+            // Pinned so the header-claim words have no slack.
+            if gw(table, W_HDR_IDX)? != 0
+                || gw(table, W_HDR_NAME_SOFF)? != 0
+                || gw(table, W_HDR_NAME_SLEN)? != 0
+            {
+                return Err("header-claim words must be 0 for a JSON claim");
+            }
+            let n_nodes = gw(table, W_N_NODES)?;
+            if n_nodes == 0 {
+                return Err("the response body must be claimed as JSON");
+            }
+            let jc = JsonClaim {
+                n_nodes,
+                nodes_off: gw(table, W_NODES_OFF)?,
+                n_path: gw(table, W_N_PATH)?,
+                path_off: gw(table, W_PATH_OFF)?,
+                value_node: gw(table, W_VALUE_NODE)?,
+                str_off,
+                str_bytes,
+                mode: gw(table, W_CLAIM_MODE)?,
+                expect_soff: gw(table, W_EXPECT_SOFF)?,
+                expect_slen: gw(table, W_EXPECT_SLEN)?,
+            };
+            let (vs, vl) =
+                verify_json_claim(recv, resp_head_end, recv.len(), table, &jc, &mut bad)?;
+            (vs, vl, false)
+        }
+        TARGET_REQ_HEADER | TARGET_RESP_HEADER => {
+            // The response body is covered as OPAQUE private bytes (its
+            // framing was pinned above, contents unconstrained and
+            // unclaimed); the JSON section must be empty, pinned so its
+            // words have no slack.
+            if gw(table, W_N_NODES)? != 0
+                || gw(table, W_NODES_OFF)? != 0
+                || gw(table, W_N_PATH)? != 0
+                || gw(table, W_PATH_OFF)? != 0
+                || gw(table, W_VALUE_NODE)? != 0
+            {
+                return Err("JSON-claim words must be 0 for a header claim");
+            }
+            let in_sent = target == TARGET_REQ_HEADER;
+            let (hs, n, buf): (&[Hdr; MAX_HEADERS], usize, &[u8]) = if in_sent {
+                (&req_hs, req_n, sent)
+            } else {
+                (&resp_hs, resp_n, recv)
+            };
+            let idx = gw(table, W_HDR_IDX)?;
+            if idx >= n {
+                return Err("claimed header index out of range");
+            }
+            let h = hs[idx];
+            // The claimed name (public): a lowercase token whose private
+            // bytes it must match case-insensitively. The span lengths are
+            // both public, so a length mismatch is a concrete rejection.
+            let mut name = [0u8; 256];
+            let name_len = str_slice(
+                table,
+                str_off,
+                str_bytes,
+                gw(table, W_HDR_NAME_SOFF)?,
+                gw(table, W_HDR_NAME_SLEN)?,
+                &mut name,
+            )?;
+            let name = &name[..name_len];
+            if name.is_empty() || !name.iter().all(|&b| is_tchar(b as i32) == 1) {
+                return Err("claimed header name is not a token");
+            }
+            if name.iter().any(|b| b.is_ascii_uppercase()) {
+                return Err("claimed header name must be lowercase");
+            }
+            if h.ne - h.ns != name.len() {
+                return Err("claimed header name length mismatch");
+            }
+            bad = bb(bad | f(name_eq_ci(buf, h.ns, h.ne, name) == 0));
+
+            let value_len = h.ve - h.vs;
+            if value_len > OUT_CAP {
+                return Err("claimed value too long");
+            }
+            let mode = gw(table, W_CLAIM_MODE)?;
+            let expect_soff = gw(table, W_EXPECT_SOFF)?;
+            let expect_slen = gw(table, W_EXPECT_SLEN)?;
+            match mode {
+                MODE_DISCLOSE => {
+                    // Pinned so the words have no slack when meaningless.
+                    if expect_soff != 0 || expect_slen != 0 {
+                        return Err("expected string set in disclose mode");
+                    }
+                    (h.vs, value_len, in_sent)
+                }
+                MODE_ASSERT => {
+                    if expect_slen == value_len {
+                        let mut expect = [0u8; OUT_CAP];
+                        let elen = str_slice(
+                            table,
+                            str_off,
+                            str_bytes,
+                            expect_soff,
+                            expect_slen,
+                            &mut expect,
+                        )?;
+                        check_eq_pub(buf, h.vs, &expect[..elen], &mut bad);
+                    } else {
+                        // Public lengths differ: the assert can never
+                        // hold. Both parties fold the same rejection.
+                        bad = bb(bad | 1);
+                    }
+                    (0, 0, false)
+                }
+                _ => return Err("unknown claim mode"),
+            }
+        }
+        _ => return Err("unknown claim target"),
+    };
+
+    Ok(Disclosure {
+        ok: f(bad == 0),
+        value_start,
+        value_len,
+        value_in_sent,
+    })
+}
+
+/// The (concrete) JSON-claim section of a flat table — node spans, path
+/// components, claim mode — read out of the table by each format's own
+/// header layout. The transcript table and the JSON-only table
+/// ([`json`]) share this section's semantics, not its word positions.
+pub(crate) struct JsonClaim {
+    pub n_nodes: usize,
+    pub nodes_off: usize,
+    pub n_path: usize,
+    pub path_off: usize,
+    pub value_node: usize,
+    pub str_off: usize,
+    pub str_bytes: usize,
+    pub mode: usize,
+    pub expect_soff: usize,
+    pub expect_slen: usize,
+}
+
+/// Verifies the claimed JSON value occupying `buf[body_start..body_end]`:
+/// the (public) node spans drive a concrete walk, the private bytes are
+/// checked at every claimed position, the gaps tile everything between,
+/// the public path binds the claimed value node, and the claim mode is
+/// applied. Every private byte check accumulates into `bad`; the returned
+/// span is the (public) disclosure — `(0, 0)` in assert mode.
+pub(crate) fn verify_json_claim(
+    buf: &[u8],
+    body_start: usize,
+    body_end: usize,
+    table: &[u32],
+    jc: &JsonClaim,
+    bad: &mut i32,
+) -> Result<(usize, usize), &'static str> {
+    let n_nodes = jc.n_nodes;
+    let nodes_off = jc.nodes_off;
 
     let mut fr_node = [0usize; MAX_DEPTH];
     let mut fr_obj = [false; MAX_DEPTH];
@@ -808,7 +1006,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
     let mut fr_keys = [[0u32; MAX_KEYS]; MAX_DEPTH];
     let mut depth = 0usize;
 
-    let mut p = resp_head_end;
+    let mut p = body_start;
     let mut k = 0usize;
 
     'value: loop {
@@ -825,7 +1023,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
         }
         // Whitespace-only gap up to this value's first byte (separators are
         // consumed before re-entering the loop, below).
-        check_gap(recv, p, fb, None, &mut bad);
+        check_gap(buf, p, fb, None, bad);
         p = fb;
 
         if nd.kind == KIND_OBJECT || nd.kind == KIND_ARRAY {
@@ -837,7 +1035,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
             if nd.end < nd.start + 2 {
                 return Err("container too small");
             }
-            bad = bb(bad | f(eq(byte(recv, p), if is_obj { b'{' } else { b'[' }) == 0));
+            *bad = bb(*bad | f(eq(byte(buf, p), if is_obj { b'{' } else { b'[' }) == 0));
             fr_node[depth] = k;
             fr_obj[depth] = is_obj;
             fr_nkeys[depth] = 0;
@@ -850,8 +1048,8 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
             } else if is_obj {
                 // A member key must follow the brace.
                 p = member_key(
-                    recv, table, nodes_off, n_nodes, body_end, p, &mut k, &mut fr_keys,
-                    &mut fr_nkeys, depth - 1, None, &mut bad,
+                    buf, table, nodes_off, n_nodes, body_end, p, &mut k, &mut fr_keys,
+                    &mut fr_nkeys, depth - 1, None, bad,
                 )?;
                 continue 'value;
             } else {
@@ -871,22 +1069,22 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                     if nd.end >= body_end {
                         return Err("string missing closing quote");
                     }
-                    bad = bb(bad | f(eq(byte(recv, p), b'"') == 0));
-                    check_string_content(recv, nd.start, nd.end, &mut bad);
-                    bad = bb(bad | f(eq(byte(recv, nd.end), b'"') == 0));
+                    *bad = bb(*bad | f(eq(byte(buf, p), b'"') == 0));
+                    check_string_content(buf, nd.start, nd.end, bad);
+                    *bad = bb(*bad | f(eq(byte(buf, nd.end), b'"') == 0));
                     p = nd.end + 1;
                 }
                 KIND_NUMBER => {
                     if nd.end == nd.start || nd.end - nd.start > MAX_NUMBER_LEN {
                         return Err("number lexeme length out of range");
                     }
-                    check_number(recv, nd.start, nd.end, &mut bad);
+                    check_number(buf, nd.start, nd.end, bad);
                     p = nd.end;
                 }
                 KIND_BOOL => {
                     match nd.end - nd.start {
-                        4 => check_lit(recv, nd.start, b"true", &mut bad),
-                        5 => check_lit(recv, nd.start, b"false", &mut bad),
+                        4 => check_lit(buf, nd.start, b"true", bad),
+                        5 => check_lit(buf, nd.start, b"false", bad),
                         _ => return Err("bool lexeme length"),
                     }
                     p = nd.end;
@@ -895,7 +1093,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                     if nd.end - nd.start != 4 {
                         return Err("null lexeme length");
                     }
-                    check_lit(recv, nd.start, b"null", &mut bad);
+                    check_lit(buf, nd.start, b"null", bad);
                     p = nd.end;
                 }
                 _ => return Err("unexpected node kind"),
@@ -907,7 +1105,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
         loop {
             if depth == 0 {
                 // Root complete: trailing whitespace only, table consumed.
-                check_gap(recv, p, body_end, None, &mut bad);
+                check_gap(buf, p, body_end, None, bad);
                 if k != n_nodes {
                     return Err("table has extra JSON nodes");
                 }
@@ -923,8 +1121,8 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                 // Another member/element: `ws* , ws*` up to its first byte.
                 if fr_obj[fi] {
                     p = member_key(
-                        recv, table, nodes_off, n_nodes, body_end, p, &mut k, &mut fr_keys,
-                        &mut fr_nkeys, fi, Some(b','), &mut bad,
+                        buf, table, nodes_off, n_nodes, body_end, p, &mut k, &mut fr_keys,
+                        &mut fr_nkeys, fi, Some(b','), bad,
                     )?;
                 } else {
                     let nxt = get_node(table, nodes_off, k)?;
@@ -932,7 +1130,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                     if fb < p {
                         return Err("node spans out of order");
                     }
-                    check_gap(recv, p, fb, Some(b','), &mut bad);
+                    check_gap(buf, p, fb, Some(b','), bad);
                     p = fb;
                 }
                 continue 'value;
@@ -941,9 +1139,9 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
             if fnode.end < p + 1 {
                 return Err("container end before cursor");
             }
-            check_gap(recv, p, fnode.end - 1, None, &mut bad);
-            bad = bb(bad
-                | f(eq(byte(recv, fnode.end - 1), if fr_obj[fi] { b'}' } else { b']' }) == 0));
+            check_gap(buf, p, fnode.end - 1, None, bad);
+            *bad = bb(*bad
+                | f(eq(byte(buf, fnode.end - 1), if fr_obj[fi] { b'}' } else { b']' }) == 0));
             p = fnode.end;
             // Duplicate keys: pairwise raw comparison (same-length pairs
             // only — the lengths are public).
@@ -953,7 +1151,8 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                     let ka = get_node(table, nodes_off, fr_keys[fi][a] as usize)?;
                     let kb = get_node(table, nodes_off, fr_keys[fi][b2] as usize)?;
                     if ka.end - ka.start == kb.end - kb.start {
-                        bad = bb(bad | bytes_eq_priv(recv, ka.start, kb.start, ka.end - ka.start));
+                        *bad =
+                            bb(*bad | bytes_eq_priv(buf, ka.start, kb.start, ka.end - ka.start));
                     }
                 }
             }
@@ -962,10 +1161,14 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
     }
 
     // === the path claim: public components bind the disclosed node ===
-    let n_path = gw(table, W_N_PATH)?;
-    let path_off = gw(table, W_PATH_OFF)?;
+    let n_path = jc.n_path;
+    let path_off = jc.path_off;
     if n_path > MAX_PATH {
         return Err("too many path components");
+    }
+    if n_path == 0 && path_off != 0 {
+        // Pinned so the word has no slack when it is meaningless.
+        return Err("path offset must be 0 without components");
     }
     let mut cur = 0usize; // current value node (the root)
     for c in 0..n_path {
@@ -1003,8 +1206,8 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
                 return Err("path component length mismatch");
             }
             let mut comp = [0u8; 64];
-            let clen = str_slice(table, str_off, str_bytes, soff, slen, &mut comp)?;
-            check_eq_pub(recv, key.start, &comp[..clen], &mut bad);
+            let clen = str_slice(table, jc.str_off, jc.str_bytes, soff, slen, &mut comp)?;
+            check_eq_pub(buf, key.start, &comp[..clen], bad);
             cur = idx + 1;
         } else {
             // Array-index component: pure public tree navigation.
@@ -1025,7 +1228,7 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
             cur = child;
         }
     }
-    if cur != gw(table, W_VALUE_NODE)? {
+    if cur != jc.value_node {
         return Err("path does not resolve to the claimed node");
     }
     let value = get_node(table, nodes_off, cur)?;
@@ -1040,9 +1243,9 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
 
     // The claim itself: disclose the value's bytes, or assert (privately)
     // that they equal the public expected string.
-    let mode = gw(table, W_CLAIM_MODE)?;
-    let expect_soff = gw(table, W_EXPECT_SOFF)?;
-    let expect_slen = gw(table, W_EXPECT_SLEN)?;
+    let mode = jc.mode;
+    let expect_soff = jc.expect_soff;
+    let expect_slen = jc.expect_slen;
     let (value_start, out_len) = match mode {
         MODE_DISCLOSE => {
             // Pinned so the words have no slack when they are meaningless.
@@ -1054,24 +1257,26 @@ pub fn verify(sent: &[u8], recv: &[u8], table: &[u32]) -> Result<Disclosure, &'s
         MODE_ASSERT => {
             if expect_slen == value_len {
                 let mut expect = [0u8; OUT_CAP];
-                let elen =
-                    str_slice(table, str_off, str_bytes, expect_soff, expect_slen, &mut expect)?;
-                check_eq_pub(recv, value.start, &expect[..elen], &mut bad);
+                let elen = str_slice(
+                    table,
+                    jc.str_off,
+                    jc.str_bytes,
+                    expect_soff,
+                    expect_slen,
+                    &mut expect,
+                )?;
+                check_eq_pub(buf, value.start, &expect[..elen], bad);
             } else {
                 // Public lengths differ: the assert can never hold. Both
                 // parties fold the same concrete rejection.
-                bad = bb(bad | 1);
+                *bad = bb(*bad | 1);
             }
             (0, 0)
         }
         _ => return Err("unknown claim mode"),
     };
 
-    Ok(Disclosure {
-        ok: f(bad == 0),
-        value_start,
-        value_len: out_len,
-    })
+    Ok((value_start, out_len))
 }
 
 /// Verifies one object member key at the cursor and the colon gap to its
@@ -1133,5 +1338,7 @@ fn member_key(
     Ok(vfb)
 }
 
+#[cfg(test)]
+mod json_tests;
 #[cfg(test)]
 mod tests;
