@@ -183,11 +183,14 @@ regex table and CSV column index rely on this.
 
 ## Status / open items
 
-- Repo: github.com/tlsnotary/speakup-demo (public).
-- GitHub Pages: `.github/workflows/deploy.yml` builds the wasm pkg + vite
-  site on every push to main and deploys via actions/deploy-pages. Repo
-  settings → Pages → source must be "GitHub Actions". Vite base is
-  `/speakup-demo/`.
+- Repo: github.com/privacy-ethereum/speakup, the demo lives under `demo/`
+  (imported from tlsnotary/speakup-demo with full history).
+- GitHub Pages: the root `.github/workflows/pages.yml` builds the Sphinx
+  docs AND the wasm pkg + vite site on every push to main, then deploys
+  both as one artifact (docs at the root, demo under `/demo/`). Both build
+  jobs always run — a single-artifact deploy would otherwise wipe the
+  other half of the site. Repo settings → Pages → source must be "GitHub
+  Actions". Vite base is `/speakup/demo/`.
 - Perf anchors (Chrome, M-series 18 cores → 9 threads/party, threaded build
   + mpz c215974 + wasm-simd aes patch): square ≈ 0.08 s; regex email ≈ 0.28 s;
   csv 4 rows ≈ 0.11 s; transcript (jsonplaceholder_post, 1543 private bytes)

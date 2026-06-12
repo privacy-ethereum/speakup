@@ -56,8 +56,9 @@ const pkgVersion = (() => {
 })();
 
 export default defineConfig({
-  // Served at https://<org>.github.io/speakup-demo/
-  base: "/speakup-demo/",
+  // Served at https://privacy-ethereum.github.io/speakup/demo/ (the docs
+  // site owns the root; the Pages workflow nests the demo under /demo/).
+  base: "/speakup/demo/",
   define: { __PKG_VERSION__: JSON.stringify(pkgVersion) },
   plugins: [coiServiceworker()],
   // The guest sources are ?raw-imported from ../guests for the

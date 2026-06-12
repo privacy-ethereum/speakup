@@ -1,8 +1,9 @@
 # Speakup demo
 
-A stand-alone browser demo of
+A browser demo of
 [Speakup](https://privacy-ethereum.github.io/speakup/), the zero-knowledge
-virtual machine built on [mpz](https://github.com/privacy-ethereum/mpz): a
+virtual machine built on [mpz](https://github.com/privacy-ethereum/mpz) —
+live at <https://privacy-ethereum.github.io/speakup/demo/>: a
 prover and a verifier, both running as WebAssembly in your browser, executing
 a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
@@ -57,7 +58,7 @@ steps use all your cores. That requires cross-origin isolation
 | `rust/` | wasm-bindgen wrapper around the mpz zk-vm: per-party entry points over a `MessagePort` duplex (`port_io.rs`), plus single-instance variants for tests. Its `build.rs` compiles `guests/` to wasm. |
 | `web/` | Vite + TS UI: prover pane left, verifier pane right, one worker per party, the page relaying and counting protocol traffic. |
 
-The repo is self-contained: mpz is consumed as a git dependency pinned to its
+The demo is self-contained: mpz is consumed as a git dependency pinned to its
 [`v2` branch](https://github.com/privacy-ethereum/mpz/tree/v2), and the guest
 wasm is built from the in-repo sources.
 

@@ -1,8 +1,15 @@
 # SpeakUp
 
-Documentation for the SpeakUp zkVM.
+Documentation and browser demo for the SpeakUp zkVM.
 
-## Building
+- [`docs/`](docs/) — the Sphinx documentation site, deployed to
+  <https://privacy-ethereum.github.io/speakup/>.
+- [`demo/`](demo/) — a live in-browser demo (prover and verifier as web
+  workers over the real protocol), deployed alongside the docs at
+  <https://privacy-ethereum.github.io/speakup/demo/>. See
+  [`demo/README.md`](demo/README.md).
+
+## Building the docs
 
 ```
 uv run sphinx-build docs docs/_build/html
