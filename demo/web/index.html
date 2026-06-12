@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Speakup — prove a computation without revealing your input</title>
+    <!-- Favicon: the SpeakUp head silhouette (see public/favicon.svg).
+         Relative paths so they resolve under the /speakup-demo/ base. -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="theme-color" content="#0e1116" />
     <!-- Threaded wasm needs cross-origin isolation (SharedArrayBuffer).
          GitHub Pages can't send COOP/COEP headers, so this service worker
          injects them (one transparent reload on first visit). No-op where
