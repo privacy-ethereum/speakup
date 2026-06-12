@@ -1691,6 +1691,13 @@ const remoteEvents = {
   },
 };
 
+/// Remote runs cross a real network: zero the simulated latency on connect
+/// (deliver() reads the slider live; the body class hides it while linked).
+const resetLatency = () => {
+  delaySlider.value = "0";
+  delayValue.textContent = "0 ms";
+};
+
 /// Tears down the link on purpose (disconnect button, version mismatch).
 const disconnectRemote = (reason: string) => {
   if (remote.kind === "local") return;
@@ -1738,6 +1745,7 @@ inviteBtn.addEventListener("click", () => {
       }
       link.sendControl({ kind: "hello", version: __PKG_VERSION__ });
       remote = { kind: "host", link };
+      resetLatency();
       document.body.classList.add("remote-host");
       remoteConnected.hidden = false;
       remoteStatusEl.textContent =
@@ -1771,6 +1779,7 @@ if (FEATURES.remote && joinParam) {
     events: remoteEvents,
     onConnected: (link) => {
       remote = { kind: "guest", link };
+      resetLatency();
       document.body.classList.add("remote-guest");
       remoteStatusEl.textContent =
         "✓ connected — this device is the verifier\nruns start from the prover's device";

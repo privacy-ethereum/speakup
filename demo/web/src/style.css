@@ -469,6 +469,12 @@ body.remote-host .pane.verifier .remote-placeholder {
   display: block;
 }
 
+/* Remote runs ride a real network — no simulated latency on top. */
+body.remote-guest .controls,
+body.remote-host .controls {
+  display: none;
+}
+
 /* Guest mode (this device is the remote verifier): the run is configured
    on the prover's device, so the center input UI is display-only. */
 .remote-guest .center-input {
