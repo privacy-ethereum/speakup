@@ -54,6 +54,15 @@ workers — the QuickSilver check and the OT stack are the rayon users
   (`vite.config.ts`); GitHub Pages can't set headers, so `index.html` loads
   `coi-serviceworker` (npm dep, served/copied by a tiny vite plugin; costs
   one reload on first visit).
+- Pkg cache busting: the pkg's stable-named files (public/ assets aren't
+  hashed) + Pages' max-age=600 means a warm browser can pair new page code
+  with the PREVIOUS deploy's glue/wasm ("x is not a function" right after
+  a deploy). vite.config bakes a pkg content hash into `__PKG_VERSION__`;
+  the worker appends `?v=` to the glue import AND passes the versioned
+  wasm URL to `pkg.default({module_or_path})` (the glue's own fallback
+  resolves relative to import.meta.url, dropping the query). Init errors
+  post `error` before `ready`; the page shows pre-run errors instead of
+  swallowing them.
 - `--max-memory=4294967296` (the wasm32 ceiling): shared memories must
   declare a max, and sha-256 64 KB peaks past 2 GB. 128 KB still aborts
   (`RuntimeError: unreachable` = OOM panic) — that one needs upstream memory

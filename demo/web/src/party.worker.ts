@@ -11,10 +11,19 @@
 // resolve anything — threads would break in production.
 type Pkg = typeof import("../public/pkg/zkvm_demo");
 
+// ?v=<pkg content hash>: the pkg files keep stable names and GitHub Pages
+// caches them for 10 minutes, so without this a warm browser would pair
+// freshly-deployed page code with the previous deploy's glue/wasm.
 const pkgUrl = new URL(
-  `${import.meta.env.BASE_URL}pkg/zkvm_demo.js`,
+  `${import.meta.env.BASE_URL}pkg/zkvm_demo.js?v=${__PKG_VERSION__}`,
   self.location.origin,
 ).href;
+// Passed to init explicitly: the glue's own fallback resolves the wasm
+// relative to import.meta.url, which would drop the version query.
+const wasmUrl = new URL(
+  `${import.meta.env.BASE_URL}pkg/zkvm_demo_bg.wasm?v=${__PKG_VERSION__}`,
+  self.location.origin,
+);
 
 export type Role = "prover" | "verifier";
 
@@ -157,22 +166,32 @@ export type PartyResponse =
 const post = (msg: PartyResponse) => self.postMessage(msg);
 
 let pkg: Pkg;
+let initError: string | null = null;
 const initialized = (async () => {
-  pkg = await import(/* @vite-ignore */ pkgUrl);
-  await pkg.default();
-  // Threading: a web-spawn spawner plus a rayon pool, all nested workers of
-  // this one (terminated with it on abort). Half the cores per party — the
-  // prover and verifier run simultaneously on this machine.
-  const threads = Math.max(
-    1,
-    Math.floor((navigator.hardwareConcurrency || 4) / 2),
-  );
-  await pkg.initialize(threads);
-  post({ type: "ready" });
+  try {
+    pkg = await import(/* @vite-ignore */ pkgUrl);
+    await pkg.default({ module_or_path: wasmUrl });
+    // Threading: a web-spawn spawner plus a rayon pool, all nested workers
+    // of this one (terminated with it on abort). Half the cores per party —
+    // the prover and verifier run simultaneously on this machine.
+    const threads = Math.max(
+      1,
+      Math.floor((navigator.hardwareConcurrency || 4) / 2),
+    );
+    await pkg.initialize(threads);
+    post({ type: "ready" });
+  } catch (e) {
+    initError = e instanceof Error ? e.message : String(e);
+    post({
+      type: "error",
+      message: `wasm failed to load: ${initError} — try a hard reload (Cmd/Ctrl+Shift+R)`,
+    });
+  }
 })();
 
 self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
   await initialized;
+  if (initError) return; // already reported; nothing can run
   const msg = ev.data;
   if (msg.type === "guest_info") {
     // Facts about this party's own embedded module — the page shows both

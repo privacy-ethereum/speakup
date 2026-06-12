@@ -1321,6 +1321,13 @@ const spawnWorker = (role: Role) => {
         }
         break;
       case "error":
+        if (!run) {
+          // Errors outside a run — e.g. the wasm pkg failed to load (a
+          // stale cached copy after a deploy) — would otherwise vanish.
+          channelStatus.textContent = "error — see the log";
+          log(role === "prover" ? proverLog : verifierLog, msg.message, "err");
+          break;
+        }
         failRun(role, msg.message);
         break;
       case "guest_info":
