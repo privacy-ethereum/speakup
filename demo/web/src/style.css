@@ -32,7 +32,7 @@ h1 { margin: 0; font-size: 1.6rem; }
 .tagline { max-width: 46rem; margin: 0.6rem auto; color: var(--muted); }
 .tagline b { color: var(--text); }
 
-.programs { margin-top: 0.8rem; display: flex; gap: 0.4rem; justify-content: center; }
+.programs { margin-top: 0.8rem; display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
 .programs button {
   font: inherit;
   font-size: 0.85rem;
@@ -308,6 +308,9 @@ main {
 }
 .control-row { display: flex; align-items: center; gap: 0.5rem; }
 .control-row input[type="range"] { flex: 1; }
+/* Flex items refuse to shrink below their content (min-width: auto), and a
+   select's content is its longest option — let them shrink on small screens. */
+.control-row select { min-width: 0; }
 
 .dropzone {
   padding: 1.1rem 0.8rem;
@@ -482,6 +485,9 @@ footer {
 footer a { color: var(--verifier); }
 
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; }
+  header { padding: 1.5rem 1rem 0.5rem; }
+  /* minmax(0, …): a 1fr track's minimum is the items' content size, which
+     non-shrinking selects would push past the viewport. */
+  main { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
   .wire { padding-top: 0; }
 }
