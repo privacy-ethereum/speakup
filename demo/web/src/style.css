@@ -148,7 +148,8 @@ main {
 }
 
 .memory { margin-top: 1rem; }
-.memory input {
+.memory input,
+.memory textarea {
   width: 100%;
   padding: 0.45rem 0.6rem;
   font: inherit;
@@ -158,6 +159,7 @@ main {
   border: 1px solid var(--prover);
   border-radius: 6px;
 }
+.memory textarea { resize: vertical; }
 .blind {
   padding: 0.45rem 0.6rem;
   font-family: ui-monospace, monospace;
