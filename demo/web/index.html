@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speakup — prove a computation without revealing your input</title>
+    <!-- Favicon: the SpeakUp head silhouette (see public/favicon.svg).
+         Relative paths so they resolve under the /speakup-demo/ base. -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="theme-color" content="#0e1116" />
+    <!-- Threaded wasm needs cross-origin isolation (SharedArrayBuffer).
+         GitHub Pages can't send COOP/COEP headers, so this service worker
+         injects them (one transparent reload on first visit). No-op where
+         the server already sends them, e.g. the vite dev server. -->
+    <script src="./coi-serviceworker.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>Speakup <span class="subtitle">zero-knowledge virtual machine, live in your browser</span></h1>
+      <p class="tagline">
+        A real Rust program, compiled to WebAssembly, executed under
+        zero-knowledge: the <b>prover</b> keeps its input private, the
+        <b>verifier</b> checks every step — and learns only the result.
+      </p>
+      <nav class="programs" id="program-tabs" aria-label="Example programs">
+        <button data-program="square" class="active">simple math</button>
+        <button data-program="age">age check</button>
+        <button data-program="sha256">sha-256</button>
+        <button data-program="regex">regex</button>
+        <button data-program="luhn">credit card</button>
+        <button data-program="csv">csv average</button>
+        <button data-program="json">json claims</button>
+        <button data-program="transcript">https transcript</button>
+        <button data-program="ecdsa">ecdsa <span class="soon">soon</span></button>
+        <button data-program="custom">custom wasm</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="pane prover" aria-label="Prover">
+        <h2>Prover <span class="who">— holds the secret</span></h2>
+        <div class="program-box">
+          <div class="label">program</div>
+          <pre><code id="prover-source"></code></pre>
+          <div class="program-meta">
+            <span class="wasm-info" id="prover-wasm-info"></span>
+            <button class="link-btn" id="prover-full-source" hidden>view full source</button>
+          </div>
+        </div>
+        <div class="memory">
+          <div class="label" id="input-label">private input</div>
+          <input id="x-input" type="number" value="6" />
+          <input id="date-input" type="date" value="1990-04-15" hidden />
+          <input id="text-input" type="text" value="hello speakup" maxlength="131072" hidden />
+          <div class="presets" id="sha-presets" hidden>
+            <span>presets:</span>
+            <button data-size="1024">1 KB</button>
+            <button data-size="4096">4 KB</button>
+            <button data-size="16384">16 KB</button>
+            <button data-size="65536">64 KB</button>
+            <button data-size="131072">128 KB</button>
+            <span class="presets-hint">proving time scales with input size</span>
+          </div>
+          <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
+          <input id="card-input" type="text" value="4539 1488 0343 6467" maxlength="30" hidden />
+          <textarea id="csv-input" rows="6" spellcheck="false" hidden>62000,12
+71000,8
+58000,15
+90000,4</textarea>
+          <!-- Default document: the swiss-bank demo fixture from
+               tlsn-extension (servers/swissbank — the data behind
+               swissbank.plugin.ts), fake data published for demos. -->
+          <textarea id="json-input" rows="16" spellcheck="false" hidden>{
+    "bank": "Swiss Bank",
+    "organization": "Ethereum Foundation",
+    "account_id": "ETH-042",
+    "address": {
+        "street": "Zeughausgasse 7a",
+        "postal_code": "6300",
+        "city": "Zug",
+        "country": "Switzerland"
+    },
+    "accounts": {
+        "EUR": "275_000_000",
+        "USD": "125_000_000",
+        "CHF": "50_000_000"
+    },
+    "last_audit": "2025-11-12T12:00:00Z"
+}</textarea>
+          <textarea id="transcript-input" rows="14" readonly spellcheck="false" hidden></textarea>
+        </div>
+        <div class="log" id="prover-log" aria-live="polite"></div>
+      </section>
+
+      <section class="wire" aria-label="Protocol">
+        <div class="memory center-input" id="pattern-row" hidden>
+          <div class="label">public pattern — known to both</div>
+          <input id="pattern-input" type="text" value="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}" spellcheck="false" />
+        </div>
+        <div class="memory center-input" id="csv-row" hidden>
+          <div class="label">public column &amp; threshold — known to both</div>
+          <div class="pair">
+            <label>column <input id="col-input" type="number" value="0" min="0" max="15" /></label>
+            <label>threshold <input id="threshold-input" type="number" value="60000" min="0" max="99999" /></label>
+          </div>
+        </div>
+        <div class="memory center-input" id="json-row" hidden>
+          <div class="label">public claim — known to both</div>
+          <div class="claim" id="json-claim">parsing…</div>
+          <label class="control-row">JSON field
+            <select id="json-path"></select>
+          </label>
+          <label class="control-row">claim
+            <select id="json-mode">
+              <option value="disclose">reveal its value</option>
+              <option value="assert">assert it equals…</option>
+            </select>
+          </label>
+          <input id="json-expect" type="text" spellcheck="false"
+                 placeholder="expected value" hidden />
+        </div>
+        <div class="memory center-input" id="transcript-row" hidden>
+          <div class="label">public claim — known to both</div>
+          <div class="claim" id="transcript-claim">loading fixture…</div>
+          <label class="control-row">field
+            <select id="transcript-path"></select>
+          </label>
+          <label class="control-row">claim
+            <select id="transcript-mode">
+              <option value="assert">assert it equals…</option>
+              <option value="disclose">reveal its value</option>
+            </select>
+          </label>
+          <input id="transcript-expect" type="text" spellcheck="false"
+                 placeholder="expected value" />
+        </div>
+        <div class="memory center-input" id="custom-row" hidden>
+          <div class="label">custom guest — public, both parties run the same module</div>
+          <div class="dropzone" id="dropzone" tabindex="0">
+            drop a .wasm guest here — or click to browse<br />
+            <span class="dropzone-hint">built with mpz-vm-sys; i32/i64 arguments only</span>
+          </div>
+          <input id="wasm-file" type="file" accept=".wasm,application/wasm" hidden />
+          <div id="custom-config" hidden>
+            <label class="control-row">function
+              <select id="func-select"></select>
+            </label>
+            <div id="param-rows"></div>
+          </div>
+        </div>
+
+        <button id="run">Run in zero-knowledge</button>
+
+        <div class="channel" id="channel">
+          <div class="channel-line"></div>
+          <div class="channel-status" id="channel-status">idle</div>
+        </div>
+
+        <div class="result-box" id="result-box" hidden>
+          <div class="label" id="result-label">revealed to both</div>
+          <div class="result" id="result"></div>
+        </div>
+
+        <div class="controls">
+          <label class="control-row">simulated network latency
+            <input id="delay-slider" type="range" min="0" max="50" step="5" value="0" />
+            <span id="delay-value">0 ms</span>
+          </label>
+        </div>
+
+        <button id="cheat" class="cheat" hidden>⚡ tamper with a message</button>
+
+        <p class="note">
+          Runs the real protocol — Chou-Orlandi base OT, KOS extension, Ferret
+          expansion — not a mock. Each party lives in its own web worker with
+          its own isolated WebAssembly memory; this page only relays (and
+          counts) their messages. In production the two workers would be two
+          machines.
+        </p>
+      </section>
+
+      <section class="pane verifier" aria-label="Verifier">
+        <h2>Verifier <span class="who">— sees the proof, not the secret</span></h2>
+        <div class="program-box">
+          <div class="label">program (same module, same hash)</div>
+          <pre><code id="verifier-source"></code></pre>
+          <div class="program-meta">
+            <span class="wasm-info" id="verifier-wasm-info"></span>
+            <button class="link-btn" id="verifier-full-source" hidden>view full source</button>
+          </div>
+        </div>
+        <div class="memory">
+          <div class="label">prover's input, as the verifier sees it</div>
+          <div class="blind" id="blind-cell">░░░░░░░░</div>
+        </div>
+        <div class="log" id="verifier-log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="source-modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Guest source code">
+        <div class="modal-head">
+          <span class="modal-title" id="source-modal-title"></span>
+          <button class="link-btn" id="source-modal-close">close ✕</button>
+        </div>
+        <pre class="modal-code"><code id="source-modal-code"></code></pre>
+      </div>
+    </div>
+
+    <footer>
+      Built on <a href="https://github.com/privacy-ethereum/mpz">mpz</a> —
+      <a href="https://privacy-ethereum.github.io/speakup/">learn more about Speakup</a>.
+      This page has no server: nothing you type leaves your browser.
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
