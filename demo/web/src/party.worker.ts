@@ -36,7 +36,16 @@ export type EmbeddedProgram =
   | "luhn"
   | "csv"
   | "json"
-  | "transcript";
+  | "transcript"
+  | "ecdsa";
+
+/// The ecdsa demo's public facts: the toy curve and the embedded demo key.
+export interface EcdsaInfo {
+  curve: string;
+  qx: string;
+  qy: string;
+  msgCap: number;
+}
 
 /// The embedded HTTPS-transcript fixture, parsed by the prover's worker
 /// with the transcript-verify host parser (off the VM).
@@ -61,6 +70,7 @@ export type PartyRequest =
   | { type: "guest_info"; program: EmbeddedProgram }
   | { type: "inspect"; wasm: Uint8Array }
   | { type: "transcript_info" }
+  | { type: "ecdsa_info" }
   // `claim` is `json:<path>`, `req:<i>`, or `resp:<i>`;
   // `expect` null = disclose the value; a string = assert equality.
   | { type: "transcript_public"; claim: string; expect: string | null }
@@ -124,6 +134,14 @@ export type PartyRequest =
       claim: string; // the prover re-derives everything from these two
       expect: string | null; // null = disclose, string = assert equality
       words: Uint32Array; // the public table; all the verifier ever gets
+    }
+  | {
+      type: "run";
+      role: Role;
+      program: "ecdsa";
+      message: Uint8Array; // empty on the verifier side
+      msgLen: number;
+      corrupt: boolean; // prover only: flip a signature bit after signing
     };
 
 /// One exported function of an inspected module.
@@ -141,6 +159,7 @@ export type PartyResponse =
   | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string }
   | { type: "exports"; exports?: ExportInfo[]; error?: string }
   | { type: "transcript_info"; info?: TranscriptInfo; error?: string }
+  | { type: "ecdsa_info"; info?: EcdsaInfo; error?: string }
   | {
       type: "transcript_public";
       claim: string;
@@ -212,6 +231,16 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
       post({ type: "transcript_info", info: JSON.parse(pkg.transcript_info()) });
     } catch (e) {
       post({ type: "transcript_info", error: e instanceof Error ? e.message : String(e) });
+    }
+    return;
+  }
+  if (msg.type === "ecdsa_info") {
+    // The (public) toy curve and demo key, embedded in the bindings — the
+    // page shows them in the "known to both" row.
+    try {
+      post({ type: "ecdsa_info", info: JSON.parse(pkg.ecdsa_info()) });
+    } catch (e) {
+      post({ type: "ecdsa_info", error: e instanceof Error ? e.message : String(e) });
     }
     return;
   }
@@ -355,6 +384,13 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
           msg.role === "prover"
             ? await pkg.prover_transcript(port, msg.claim, msg.expect ?? undefined)
             : await pkg.verifier_transcript(port, msg.words);
+        break;
+      case "ecdsa":
+        result = String(
+          msg.role === "prover"
+            ? await pkg.prover_ecdsa(port, msg.message, msg.corrupt)
+            : await pkg.verifier_ecdsa(port, msg.msgLen),
+        );
         break;
     }
     post({ type: "done", result, ms: performance.now() - start });

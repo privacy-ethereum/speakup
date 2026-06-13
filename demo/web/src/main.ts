@@ -1,6 +1,7 @@
 import QRCode from "qrcode";
 import { FEATURES } from "./config";
 import type {
+  EcdsaInfo,
   EmbeddedProgram,
   ExportInfo,
   PartyRequest,
@@ -30,6 +31,8 @@ import jsonSrc from "../../guests/json/src/lib.rs?raw";
 import jsonCoreSrc from "../../guests/transcript-core/src/json.rs?raw";
 import transcriptSrc from "../../guests/transcript/src/lib.rs?raw";
 import transcriptCoreSrc from "../../guests/transcript-core/src/lib.rs?raw";
+import ecdsaSrc from "../../guests/ecdsa/src/lib.rs?raw";
+import ecdsaCoreSrc from "../../guests/ecdsa-core/src/lib.rs?raw";
 
 // One worker per party: two isolated wasm memories. The prover's secrets
 // physically cannot be in the verifier's address space. Spawned (and on
@@ -68,6 +71,11 @@ const transcriptClaim = $("transcript-claim");
 const transcriptPath = $<HTMLSelectElement>("transcript-path");
 const transcriptMode = $<HTMLSelectElement>("transcript-mode");
 const transcriptExpect = $<HTMLInputElement>("transcript-expect");
+const ecdsaInput = $<HTMLInputElement>("ecdsa-input");
+const ecdsaCorruptRow = $("ecdsa-corrupt-row");
+const ecdsaCorrupt = $<HTMLInputElement>("ecdsa-corrupt");
+const ecdsaRow = $("ecdsa-row");
+const ecdsaClaim = $("ecdsa-claim");
 const colInput = $<HTMLInputElement>("col-input");
 const thresholdInput = $<HTMLInputElement>("threshold-input");
 const inputLabel = $("input-label");
@@ -174,6 +182,10 @@ let transcriptInfo: TranscriptInfo | null = null;
 /// pair it was computed for (guards against running with a stale table).
 let transcriptWords: Uint32Array | null = null;
 let transcriptWordsKey = "";
+
+// --- ecdsa public facts (filled by the prover worker's answer) ---
+
+let ecdsaInfo: EcdsaInfo | null = null;
 
 /// `null` = disclose mode; a string = assert the field equals it.
 const transcriptExpectValue = (): string | null =>
@@ -612,30 +624,67 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the transcript (every header and field other than the claims)",
   },
-  // Placeholder: no guest exists yet. The tab shows what's planned and the
-  // Run button explains itself; everything else (guest crate, bindings,
-  // worker plumbing) lands with the implementation.
   ecdsa: {
-    source: `// coming soon
-//
-// fn verify(msg, sig, pubkey) -> i32 {
-//     // verify an ECDSA signature
-//     // INSIDE the zk-vm: prove a
-//     // private message carries a
-//     // valid signature, revealing
-//     // neither message nor signature
-//     reveal(ecdsa_verify(...))
-// }`,
-    inputLabel: "private message & signature",
+    source: `fn verify_sig(len: i32) -> i32 {
+    // real ECDSA — sha-256, u1·G + u2·Q,
+    // x =? r — over a PRIVATE message and
+    // a PRIVATE signature, branch-free:
+    // inverses ride along as advice the
+    // checks force to be honest
+    reveal(ecdsa_verify(msg, r, s, Q))
+}`,
+    fullSource: {
+      title: "guests/ecdsa/src/lib.rs (+ ecdsa-core)",
+      code: `${ecdsaSrc}\n// ───── guests/ecdsa-core/src/lib.rs ─────\n\n${ecdsaCoreSrc}`,
+    },
+    module: "ecdsa",
+    input: ecdsaInput,
+    inputLabel: "private message — signed here with the demo key, then proven",
+    centerRow: ecdsaRow,
     requests() {
-      return "ecdsa is not implemented yet — coming soon";
+      const bytes = new TextEncoder().encode(ecdsaInput.value);
+      const cap = ecdsaInfo?.msgCap ?? 512;
+      if (bytes.length === 0) return "message must not be empty";
+      if (bytes.length > cap) return `message too long (max ${cap} bytes)`;
+      return {
+        prover: {
+          type: "run",
+          role: "prover",
+          program: "ecdsa",
+          message: bytes,
+          msgLen: bytes.length,
+          corrupt: ecdsaCorrupt.checked,
+        },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "ecdsa",
+          message: new Uint8Array(),
+          msgLen: bytes.length,
+          corrupt: false,
+        },
+      };
     },
-    blind: () => "—",
-    proverStage: () => "",
+    blind: () =>
+      `${hatch(utf8len(ecdsaInput.value))} + ░░░░░░░░ signature (r, s)`,
+    proverStage() {
+      const n = utf8len(ecdsaInput.value);
+      return (
+        `signing with the demo key, staging private message (${n} bytes) + signature` +
+        (ecdsaCorrupt.checked ? " — ⚡ one signature bit flipped" : "")
+      );
+    },
     render(result) {
-      return { text: result, cls: "", log: `result: ${result}` };
+      const ok = result === "1";
+      return {
+        text: ok ? "✓ valid signature under the public key" : "✗ not proven",
+        cls: ok ? "ok" : "no",
+        log: ok
+          ? "proved: the hidden message carries a valid signature — neither it nor (r, s) was disclosed"
+          : "not proven: the signature does not verify",
+      };
     },
-    secretName: "the message and signature",
+    secretName: "the message and the signature",
   },
   custom: {
     source: `// drop a compiled guest module
@@ -742,6 +791,7 @@ const selectProgram = (key: ProgramKey) => {
   // No prover-pane input for custom: its arguments live in the center panel.
   (inputLabel.parentElement as HTMLElement).hidden = !p.input;
   shaPresets.hidden = key !== "sha256";
+  ecdsaCorruptRow.hidden = key !== "ecdsa";
   if (p.centerRow) p.centerRow.hidden = false;
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
@@ -753,6 +803,10 @@ const selectProgram = (key: ProgramKey) => {
   // The (editable) document is parsed lazily on first entry; edits
   // re-parse via the input listener.
   if (key === "json" && !jsonPaths) requestJsonInfo();
+  // The curve and demo-key facts are embedded constants, fetched once.
+  if (key === "ecdsa" && !ecdsaInfo) {
+    workers.prover.postMessage({ type: "ecdsa_info" } satisfies PartyRequest);
+  }
   for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
   requestGuestInfo(p);
   if (key === "custom" && customInfoLine) {
@@ -1142,6 +1196,20 @@ transcriptMode.addEventListener("change", () => {
 });
 transcriptExpect.addEventListener("input", requestTranscriptWords);
 
+// --- ecdsa plumbing ---
+
+/// The prover worker's answer to an `ecdsa_info` request: fill the public
+/// "known to both" row with the curve and demo key.
+const onEcdsaInfo = (msg: { info?: EcdsaInfo; error?: string }) => {
+  if (!msg.info) {
+    ecdsaClaim.textContent = `✗ ${msg.error ?? "curve info unavailable"}`;
+    return;
+  }
+  ecdsaInfo = msg.info;
+  ecdsaClaim.textContent =
+    `toy curve ${msg.info.curve} · Q = (0x${msg.info.qx}, 0x${msg.info.qy})`;
+};
+
 // --- full-source modal ---
 
 for (const btn of fullSourceBtns) {
@@ -1421,6 +1489,9 @@ const spawnWorker = (role: Role) => {
       case "json_public":
         onJsonPublic(msg);
         break;
+      case "ecdsa_info":
+        onEcdsaInfo(msg);
+        break;
     }
   };
   workers[role] = worker;
@@ -1534,6 +1605,13 @@ const publicSummary = (): string[] => {
       return [`public: column ${colInput.value}, threshold ${thresholdInput.value}`];
     case "json":
       return [claimLine(jsonPath.value || "(document root)", jsonExpectValue())];
+    case "ecdsa":
+      return [
+        `public: message length ${utf8len(ecdsaInput.value)} bytes`,
+        ...(ecdsaInfo
+          ? [`public key Q = (0x${ecdsaInfo.qx}, 0x${ecdsaInfo.qy}) on ${ecdsaInfo.curve}`]
+          : []),
+      ];
     case "transcript":
       return [
         claimLine(

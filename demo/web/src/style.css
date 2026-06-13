@@ -264,8 +264,10 @@ main {
   color: var(--muted);
 }
 .center-input .pair input { width: 100%; }
-/* Placeholder tabs for programs that aren't implemented yet. */
-.programs .soon {
+/* Tab badges: `.soon` (not implemented yet, muted) and `.beta` (works, but a
+   limited/rough implementation we plan to harden — accent-tinted). */
+.programs .soon,
+.programs .beta {
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -275,6 +277,10 @@ main {
   padding: 0.05rem 0.35rem;
   margin-left: 0.25rem;
   vertical-align: middle;
+}
+.programs .beta {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .center-input .claim {

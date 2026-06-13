@@ -8,7 +8,7 @@ prover and a verifier, both running as WebAssembly in your browser, executing
 a Rust program (itself compiled to wasm) under zero-knowledge — and a
 visualization of what each party does and doesn't learn.
 
-**Status: working v0 over the real protocol.** Eight guests run end-to-end in
+**Status: working v0 over the real protocol.** Nine guests run end-to-end in
 the browser behind a two-pane prover/verifier UI — `square` ((x+1)² of a
 private number), `age` (prove 18+ without revealing the birth date, with a
 date picker), `sha256` (digest of a private message, up to 128 KB with size presets), and `regex` (prove a
@@ -39,7 +39,16 @@ assigned my POST `id` = 101", with the request body hidden) or
 **discloses** that one field, hiding every other header and value; the
 claim can target a JSON value at a public path or a single **header line**
 of either side — and with a header claim the response body is covered
-opaquely, so non-JSON exchanges are provable too) —
+opaquely, so non-JSON exchanges are provable too), and
+`ecdsa` (**real ECDSA signature verification inside the VM** over a
+deliberately toy 64-bit sibling of secp256k1: the prover signs a **private**
+message with a demo key and proves the signature verifies — SHA-256,
+`u₁·G + u₂·Q`, `x ≟ r` — revealing neither the message nor the signature
+`(r, s)`, only the 0/1 verdict; field inverses and `s⁻¹` ride along as
+private advice the in-VM checks force to be honest, and a fixed-window comb
+table for the double scalar-mult is derived from the public key off the VM,
+so the verifier learns the key and the verdict but nothing else; a checkbox
+hands over a tampered signature to watch the proof honestly fail) —
 with correlated randomness from the **real OT stack** (Chou-Orlandi base OT, KOS extension, Ferret expansion), not an ideal
 functionality. **Each party runs in its own
 web worker** — two isolated WebAssembly memories — speaking the mpz protocol
@@ -71,8 +80,15 @@ wasm is built from the in-repo sources.
 
 ```sh
 cd rust && wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
-cd ../web && npm install && npm run dev   # then open http://localhost:5173
+cd ../web && npm install && npm run dev   # then open the URL it prints, e.g. http://localhost:5173/speakup-demo/
 ```
+
+Open the exact URL `npm run dev` prints — the app is served under the
+`/speakup-demo/` base path (the bare `http://localhost:5173` just redirects
+there), and if port 5173 is busy (e.g. an earlier `npm run dev` left running)
+vite picks the next free port. After rebuilding the pkg, restart `npm run dev`
+so it serves the new build; a stale dev server pinned to an old pkg version
+shows up as an "x is not a function" error on the page.
 
 ## Design decisions (from the planning jam)
 

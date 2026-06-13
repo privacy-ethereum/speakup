@@ -31,6 +31,9 @@
 //!   transcript-verify PR's host parser produces a span table OUTSIDE the
 //!   VM; the guest re-derives it branch-free from the private bytes and
 //!   reveals only one JSON value at a public path.
+//! - `ecdsa`: real ECDSA verification — SHA-256, u₁·G + u₂·Q, x ≟ r — over
+//!   a toy 64-bit sibling of secp256k1, with a private message AND a
+//!   private signature; only the 0/1 verdict is revealed.
 //! - custom: a user-supplied wasm module; any exported function over
 //!   i32/i64 scalars, each argument public or private per a (public)
 //!   visibility assignment.
@@ -63,6 +66,7 @@ const LUHN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/luhn.wasm"));
 const CSV_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/csv.wasm"));
 const JSON_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/json.wasm"));
 const TRANSCRIPT_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/transcript.wasm"));
+const ECDSA_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ecdsa.wasm"));
 
 // The transcript demo's fixture: exact wire bytes of one HTTPS exchange,
 // copied by build.rs out of the transcript-verify checkout (see its
@@ -161,6 +165,7 @@ pub fn guest_wasm(program: &str) -> Result<Vec<u8>, JsError> {
         "csv" => CSV_WASM,
         "json" => JSON_WASM,
         "transcript" => TRANSCRIPT_WASM,
+        "ecdsa" => ECDSA_WASM,
         _ => return Err(JsError::new(&format!("unknown program: {program}"))),
     };
     Ok(wasm.to_vec())
@@ -1232,6 +1237,154 @@ pub async fn json_zkvm(
     let (rp, rv) = join(
         json_prover_inner(&mut prover, &mut ctx_p, &module, doc.as_bytes(), &enc.words),
         json_verifier_inner(&mut verifier, &mut ctx_v, &module, &enc.words),
+    )
+    .await;
+    let (rp, rv) = (rp?, rv?);
+    if rp != rv {
+        return Err(JsError::new("party results differ"));
+    }
+    Ok(rp)
+}
+
+// === ecdsa (signature verification inside the VM) ===
+//
+// Real ECDSA verification — SHA-256(msg), u₁·G + u₂·Q, x ≟ r — over a toy
+// 64-bit sibling of secp256k1, sized to the VM's proving budget (P-256 needs
+// ~100× the multiplications; see ecdsa-core's crate docs). The message AND
+// the signature stay private: the verifier learns the message length, the
+// public key, and the 0/1 verdict. The signature is produced here (prover
+// worker, off the VM) with the embedded demo key; the in-VM division-free
+// machinery (s⁻¹ and the per-step field inverses) rides along as private
+// advice that the guest's checks force to be honest. `corrupt` flips one
+// bit of s after signing to demonstrate the honest failure path.
+
+fn check_ecdsa_msg_len(len: usize) -> Result<(), JsError> {
+    if len == 0 || len > ecdsa_core::MSG_CAP {
+        return Err(JsError::new(&format!(
+            "message must be 1..={} bytes",
+            ecdsa_core::MSG_CAP
+        )));
+    }
+    Ok(())
+}
+
+/// Facts about the (public) curve and demo key, as JSON for the page.
+#[wasm_bindgen]
+pub fn ecdsa_info() -> String {
+    format!(
+        r#"{{"curve":"y² = x³ + {} over p = 2⁶⁴ − {}","qx":"{:016x}","qy":"{:016x}","msgCap":{}}}"#,
+        ecdsa_core::B,
+        ecdsa_core::C_P,
+        ecdsa_core::QX,
+        ecdsa_core::QY,
+        ecdsa_core::MSG_CAP,
+    )
+}
+
+fn ecdsa_ptrs(vm: &mut impl Vm, module: &Module) -> Result<(u32, u32, u32), JsError> {
+    let msg = expect_i32(vm.call_local(func(module, "msg_ptr")?, vec![]).map_err(err)?)?;
+    let advice = expect_i32(vm.call_local(func(module, "advice_ptr")?, vec![]).map_err(err)?)?;
+    let table = expect_i32(vm.call_local(func(module, "table_ptr")?, vec![]).map_err(err)?)?;
+    Ok((msg as u32, advice as u32, table as u32))
+}
+
+fn words_le(words: &[u64]) -> Vec<u8> {
+    words.iter().flat_map(|w| w.to_le_bytes()).collect()
+}
+
+async fn ecdsa_prover_inner(
+    prover: &mut Prover<ProverSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    msg: &[u8],
+    corrupt: bool,
+) -> Result<i32, JsError> {
+    let (msg_ptr, advice_ptr, table_ptr) = ecdsa_ptrs(prover, module)?;
+    let (r, mut s) = ecdsa_core::host::sign(ecdsa_core::D_DEMO, msg);
+    if corrupt {
+        // One flipped bit; the advice below is regenerated for the tampered
+        // value, so the proof fails on the algebra, not on bad advice.
+        s ^= 2;
+    }
+    let table = ecdsa_core::host::tables((ecdsa_core::QX, ecdsa_core::QY));
+    let advice = ecdsa_core::host::advice(&table, msg, r, s);
+    prover
+        .write(table_ptr, Write::Public(&words_le(&table)))
+        .map_err(err)?;
+    prover.write(msg_ptr, Write::Private(msg)).map_err(err)?;
+    prover
+        .write(advice_ptr, Write::Private(&words_le(&advice)))
+        .map_err(err)?;
+    let r = prover
+        .call(
+            ctx,
+            func(module, "verify_sig")?,
+            vec![Param::Public(Value::I32(msg.len() as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+async fn ecdsa_verifier_inner(
+    verifier: &mut Verifier<VerifierSvole>,
+    ctx: &mut Context,
+    module: &Module,
+    msg_len: usize,
+) -> Result<i32, JsError> {
+    let (msg_ptr, advice_ptr, table_ptr) = ecdsa_ptrs(verifier, module)?;
+    // The comb table is derived from public data only — this party computes
+    // its own copy, and the protocol checks the parties' copies agree.
+    let table = ecdsa_core::host::tables((ecdsa_core::QX, ecdsa_core::QY));
+    verifier
+        .write(table_ptr, Write::Public(&words_le(&table)))
+        .map_err(err)?;
+    verifier.write(msg_ptr, Write::Blind(msg_len)).map_err(err)?;
+    verifier
+        .write(advice_ptr, Write::Blind(ecdsa_core::ADVICE_BYTES))
+        .map_err(err)?;
+    let r = verifier
+        .call(
+            ctx,
+            func(module, "verify_sig")?,
+            vec![Param::Public(Value::I32(msg_len as i32))],
+        )
+        .await
+        .map_err(err)?;
+    expect_i32(r)
+}
+
+/// Prover side of the ecdsa demo: signs the private `message` with the
+/// embedded demo key (off the VM), then proves the signature verifies
+/// inside the VM. Returns the revealed 0/1 verdict.
+#[wasm_bindgen]
+pub async fn prover_ecdsa(port: MessagePort, message: Vec<u8>, corrupt: bool) -> Result<i32, JsError> {
+    check_ecdsa_msg_len(message.len())?;
+    let (mut prover, module) = prover_for(ECDSA_WASM)?;
+    let mut ctx = port_ctx(port)?;
+    ecdsa_prover_inner(&mut prover, &mut ctx, &module, &message, corrupt).await
+}
+
+/// Verifier side of the ecdsa demo. Learns the message length, the public
+/// key, and the verdict — never the message or the signature.
+#[wasm_bindgen]
+pub async fn verifier_ecdsa(port: MessagePort, msg_len: usize) -> Result<i32, JsError> {
+    check_ecdsa_msg_len(msg_len)?;
+    let (mut verifier, module) = verifier_for(ECDSA_WASM)?;
+    let mut ctx = port_ctx(port)?;
+    ecdsa_verifier_inner(&mut verifier, &mut ctx, &module, msg_len).await
+}
+
+/// Both parties in this instance (tests / reference).
+#[wasm_bindgen]
+pub async fn ecdsa_zkvm(message: Vec<u8>, corrupt: bool) -> Result<i32, JsError> {
+    check_ecdsa_msg_len(message.len())?;
+    let (mut prover, module) = prover_for(ECDSA_WASM)?;
+    let (mut verifier, _) = verifier_for(ECDSA_WASM)?;
+    let (mut ctx_p, mut ctx_v) = test_st_context(1024 * 1024);
+    let (rp, rv) = join(
+        ecdsa_prover_inner(&mut prover, &mut ctx_p, &module, &message, corrupt),
+        ecdsa_verifier_inner(&mut verifier, &mut ctx_v, &module, message.len()),
     )
     .await;
     let (rp, rv) = (rp?, rv?);

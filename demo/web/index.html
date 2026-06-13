@@ -31,9 +31,9 @@
         <button data-program="regex">regex</button>
         <button data-program="luhn">credit card</button>
         <button data-program="csv">csv average</button>
-        <button data-program="json">json claims</button>
-        <button data-program="transcript">https transcript</button>
-        <button data-program="ecdsa">ecdsa <span class="soon">soon</span></button>
+        <button data-program="json">json claims <span class="beta">beta</span></button>
+        <button data-program="transcript">https transcript <span class="beta">beta</span></button>
+        <button data-program="ecdsa">ecdsa <span class="beta">beta</span></button>
         <button data-program="custom">custom wasm</button>
       </nav>
     </header>
@@ -65,6 +65,11 @@
           </div>
           <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
           <input id="card-input" type="text" value="4539 1488 0343 6467" maxlength="30" hidden />
+          <input id="ecdsa-input" type="text" value="permit #4221: alice may enter the vault" maxlength="512" hidden />
+          <div class="presets" id="ecdsa-corrupt-row" hidden>
+            <label><input type="checkbox" id="ecdsa-corrupt" />
+              hand over a tampered signature — the proof honestly fails</label>
+          </div>
           <textarea id="csv-input" rows="6" spellcheck="false" hidden>62000,12
 71000,8
 58000,15
@@ -142,6 +147,10 @@
           </label>
           <input id="transcript-expect" type="text" spellcheck="false"
                  placeholder="expected value" />
+        </div>
+        <div class="memory center-input" id="ecdsa-row" hidden>
+          <div class="label">public key &amp; curve — known to both</div>
+          <div class="claim" id="ecdsa-claim">loading…</div>
         </div>
         <div class="memory center-input" id="custom-row" hidden>
           <div class="label">custom guest — public, both parties run the same module</div>

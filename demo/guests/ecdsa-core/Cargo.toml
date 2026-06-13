@@ -1,0 +1,17 @@
+[package]
+name = "ecdsa-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The branch-free ECDSA verifier shared by the ecdsa guest (which runs it on
+# the zk-vm) and the rust/ bindings (which run the host-side helpers: curve
+# generation checks, signing, table and advice construction). No mpz-vm-sys
+# dependency, so rust/ can link it.
+[features]
+# Host-side helpers (signing, tables, advice): branching code that must never
+# run inside the VM. The guest depends on this crate without the feature.
+host = []
+
+[lib]
+crate-type = ["rlib"]
