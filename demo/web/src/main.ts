@@ -1234,8 +1234,6 @@ document.addEventListener("keydown", (ev) => {
 
 // --- feature flags ---
 
-cheatBtn.hidden = !FEATURES.cheat;
-
 delaySlider.addEventListener("input", () => {
   delayValue.textContent = `${delaySlider.value} ms`;
 });
@@ -1246,7 +1244,7 @@ cheatBtn.addEventListener("click", () => {
   cheatBtn.classList.toggle("armed", cheatArmed);
   cheatBtn.textContent = cheatArmed
     ? "⚡ will tamper on the next run"
-    : "⚡ tamper with a message";
+    : "⚡ tamper with the traffic";
 });
 
 // --- readiness ---
@@ -1274,13 +1272,19 @@ const markReady = () => {
 
 // --- one protocol run ---
 
-/// A cheat corrupts the first message from this index on that is big enough
-/// to be carrying frame payload (small batches can be pure mux framing, and
-/// corrupted framing is caught by the transport — "frame size too big" —
-/// instead of the crypto, which is the story the button tells): late enough
-/// to be past OT setup, early enough that every program reaches it.
-const TAMPER_AT = 10;
-const TAMPER_MIN_BYTES = 64;
+/// A cheat flips a bit in the prover→verifier messages so the verifier's
+/// consistency check rejects the proof. It corrupts *every* payload-carrying
+/// message, not a single one: the relay numbers messages as they arrive
+/// interleaved across both directions, so a fixed index lands on different
+/// protocol data from run to run, and a lone corrupted OT correlation can
+/// fall outside the consistency-check sample — the proof then verifies
+/// anyway, the one outcome a tamper demo must never show. Corrupting the
+/// whole prover→verifier stream is caught deterministically: either the COT
+/// bootstrap check (preprocessing) or the final batch check (the proof).
+/// Messages below this size are pure mux framing / handshakes — a flipped
+/// frame header trips the transport ("frame size too big"), not the crypto,
+/// so we skip them and keep the story about the proof.
+const TAMPER_MIN_BYTES = 256;
 
 /// Message direction; the arrows match the panes' layout (prover left,
 /// verifier right).
@@ -1308,6 +1312,8 @@ interface RunState {
   /// FIFO even if the latency slider moves mid-run.
   lastAt: Record<Dir, number>;
   tamper: boolean;
+  /// How many messages this run has corrupted (for the one-time log note).
+  tamperHits: number;
   /// Remote mode: where incoming protocol bytes are delivered (the local
   /// party's page-side port end) and their direction label.
   remoteIn?: { to: Sink; dir: Dir };
@@ -1323,16 +1329,19 @@ const forward = (state: RunState, item: QueuedMsg) => {
   state.bytes[item.dir] += item.data.byteLength;
   if (
     state.tamper &&
-    state.msgs >= TAMPER_AT &&
+    item.dir === "prover→verifier" &&
     item.data.byteLength >= TAMPER_MIN_BYTES
   ) {
-    state.tamper = false; // one corruption per armed run
+    if (state.tamperHits === 0) {
+      const note =
+        "⚡ the relay is flipping a bit in the prover's messages — the verifier will reject";
+      log(proverLog, note, "warn");
+      log(verifierLog, note, "warn");
+    }
+    state.tamperHits += 1;
     const view = new Uint8Array(item.data);
-    // The middle of a large batch is payload, not a 12-byte frame header.
+    // The middle of a batch is payload, not a 12-byte frame header.
     view[view.length >> 1] ^= 0x01;
-    const note = `⚡ the relay tampered with message #${state.msgs} (${item.dir}) — one bit flipped`;
-    log(proverLog, note, "warn");
-    log(verifierLog, note, "warn");
   }
   item.to.postMessage(item.data, [item.data]);
 };
@@ -1507,6 +1516,7 @@ const newRunState = (): RunState => {
     results: {},
     lastAt: { "prover→verifier": 0, "verifier→prover": 0 },
     tamper: cheatArmed,
+    tamperHits: 0,
     ticker: 0,
   };
   state.ticker = window.setInterval(() => {
@@ -1658,7 +1668,7 @@ const startRemoteRun = (
   log(proverLog, "executing on Speakup");
   log(verifierLog, "verifying on the remote device…", "muted");
   if (state.tamper) {
-    log(proverLog, "⚡ cheat armed: this relay will corrupt one message", "warn");
+    log(proverLog, "⚡ cheat armed: this relay will corrupt the prover's messages", "warn");
   }
   attachRemoteRun(state, "prover", reqs.prover, link);
 };
@@ -1692,7 +1702,7 @@ const onRemoteStart = (msg: Extract<ControlMsg, { kind: "start" }>) => {
   log(verifierLog, "OT preprocessing (CO15 → KOS → Ferret)…");
   log(verifierLog, "verifying every instruction…");
   if (state.tamper) {
-    log(verifierLog, "⚡ cheat armed: this relay will corrupt one message", "warn");
+    log(verifierLog, "⚡ cheat armed: this relay will corrupt the prover's messages", "warn");
   }
   attachRemoteRun(state, "verifier", msg.request, link);
   // Protocol bytes that arrived while the wasm was still loading.
@@ -1920,7 +1930,7 @@ runBtn.addEventListener("click", () => {
   log(proverLog, "executing on Speakup");
   log(verifierLog, "verifying every instruction…");
   if (state.tamper) {
-    log(verifierLog, "⚡ cheat armed: the relay will corrupt one message", "warn");
+    log(verifierLog, "⚡ cheat armed: the relay will corrupt the prover's messages", "warn");
   }
   workers.prover.postMessage(reqs.prover, [toProver.port2]);
   workers.verifier.postMessage(reqs.verifier, [toVerifier.port2]);

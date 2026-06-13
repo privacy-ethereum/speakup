@@ -122,10 +122,18 @@ same run. There is **no bulk-memory support** — `memory.fill` and
   message (`web/src/main.ts`): that's where traffic counters, the simulated
   latency, and the cheat tamper live. Latency is per direction, overlapping
   (delivery scheduled at arrival + latency), so it costs latency × round-trip
-  depth, not × message count. The tamper flips a middle byte of the first
-  big-enough message past TAMPER_AT: small batches can be pure mux framing,
-  and a flipped frame header is caught by the transport ("frame size too
-  big") instead of the crypto consistency check.
+  depth, not × message count. The tamper flips a middle byte of EVERY
+  payload-carrying (≥ TAMPER_MIN_BYTES) prover→verifier message, not a single
+  one: the relay numbers messages as they arrive interleaved across both
+  directions, so a fixed index lands on different protocol data run to run,
+  and a lone corrupted OT correlation can fall OUTSIDE the consistency-check
+  sample — the proof then verifies anyway (the one outcome a tamper demo must
+  never show; this was the actual bug when it was a single fixed-index flip,
+  reproducible on the transcript/json tabs). Corrupting the whole
+  prover→verifier stream is caught deterministically — the COT bootstrap
+  check fires (verified on all eight example programs + ecdsa). Sub-256 B
+  messages are skipped: a flipped frame header trips the transport ("frame
+  size too big") not the crypto, and keeping the story about the proof.
 - `rust/src/port_io.rs` adapts a MessagePort to AsyncRead/AsyncWrite via mpsc
   pumps (the mux needs Send+Sync; MessagePort is neither). Writes are
   buffered until `poll_flush`, so one mux flush batch = one postMessage —
@@ -260,9 +268,11 @@ same run. There is **no bulk-memory support** — `memory.fill` and
   down (no peer-level error handler inside RemoteLink); `RemoteLink.close()`
   suppresses its own teardown event, so deliberate disconnects invoke
   `remoteEvents.onClose` themselves.
-- Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
-  button (default off, undecided whether it ships). The WAT editor was
-  replaced by the "custom wasm" tab (default on): drop a compiled guest,
+- Feature flags: `web/src/config.ts` — only `remote` remains (default on,
+  `?remote=0` to disable). The tamper button now ships on by default (the
+  last flag, `cheat`, was removed once the every-message corruption was
+  verified to reject on every program — see the relay note above). The WAT
+  editor was replaced by the "custom wasm" tab (default on): drop a compiled guest,
   the prover worker inspects it (`module_exports`), the page builds one
   input per argument with a private/public toggle, and the generic
   `prover_custom`/`verifier_custom` entry points call any exported
