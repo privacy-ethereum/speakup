@@ -256,8 +256,13 @@ same run. There is **no bulk-memory support** — `memory.fill` and
   mode) + blind string + claim labels (`RemoteDisplay`, consumed by the
   json/transcript render overrides) + summary log lines; `done`/`error`/
   `abort` mirror to the peer. Both directions go through `deliver()`, so
-  traffic counters, the latency slider, and the tamper button work
-  per-device. While connected, the remote party's pane is replaced by a
+  traffic counters and the tamper button work per-device — but the tamper
+  is hidden on the verifier (guest) device (`body.remote-guest .cheat`):
+  the tamper only fires on the prover→verifier direction, and the guest
+  would merely corrupt its own inbound bytes and self-reject. Only the
+  prover's device tamper is a true MITM (corrupt before send); the
+  verifier is the checker, so the button lives with the prover. While
+  connected, the remote party's pane is replaced by a
   placeholder (`.remote-placeholder`, toggled via `remote-host`/
   `remote-guest` body classes) — the local UI in that pane would show
   this page's inputs, not the actual remote party's; the pane's log stays

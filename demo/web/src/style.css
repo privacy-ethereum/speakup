@@ -481,6 +481,15 @@ body.remote-host .controls {
   display: none;
 }
 
+/* The tamper corrupts the prover→verifier channel, and only the verifier
+   can catch it (designated-verifier ZK: the verifier is the checker). On
+   the verifier device the button would just corrupt its own inbound bytes
+   and self-reject — redundant, and it muddies that asymmetry. So it lives
+   on the prover's device, where corrupting before send is a real MITM. */
+body.remote-guest .cheat {
+  display: none;
+}
+
 /* Guest mode (this device is the remote verifier): the run is configured
    on the prover's device, so the center input UI is display-only. */
 .remote-guest .center-input {
