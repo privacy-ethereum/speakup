@@ -197,20 +197,57 @@ The communication is constant in $t$ and $z$ while computation grows linearly in
 (memory-checking)=
 ## Memory Checking
 
-SpeakUp requires random access memory to model the WebAssembly linear memory, registers, call stack, and global variables. For this, SpeakUp applies the two-shuffle ZK-RAM construction of [Yang and Heath (2023)](https://eprint.iacr.org/2023/1115), which was originally presented over prime fields. SpeakUp adapts this construction to work over binary extension fields and integrates it with the QuickSilver protocol described above.
+SpeakUp requires random access memory to model the WebAssembly linear memory, registers, call stack, and global variables. For this it uses *offline memory checking*: the read/write grand product with timestamps introduced by Blum et al. (1994) and developed for verifiable computation by [Spice (Setty et al., 2018)](https://eprint.iacr.org/2018/907), and brought to VOLE-ZK by [Yang and Heath (2024)](https://eprint.iacr.org/2023/1115). SpeakUp instantiates this construction over binary extension fields and integrates it with the QuickSilver protocol described above.
 
-The ZK-RAM allows the prover to read and write to a memory of $n$ elements over the course of $T$ accesses, proving to the verifier that all accesses are consistent — without revealing the memory contents. Memory tuples (address, value, version/time) are [packed](field-packing) into $\mathbb{F}_{2^\kappa}$ elements for the permutation proofs.
+The construction lets the prover read and write a memory of $n$ words over $T$ accesses, proving to the verifier that all accesses are consistent, without revealing the memory contents. Memory tuples (address, value, time) are [packed](field-packing) into $\mathbb{F}_{2^\kappa}$ elements for the permutation proof.
 
-The construction reduces to two core primitives:
+The construction reduces to two primitives:
 
-1. **Permutation proofs** — proving that the list of values read from memory is a permutation of the list of values written, ensuring every write is matched by a corresponding read.
-2. **Set membership** — proving that each read accesses a value written in the past, not the future.
+1. **Permutation proof:** the list of tuples read from memory is a permutation of the list written, so every read is matched by a corresponding write.
+2. **Timestamp comparison:** every read accesses a value written in the past, not the future.
 
-### Adaptation to Binary Fields
+Together they force every read to return the most recent prior write to its address: the strictly increasing clock makes per-address write times unique, so the read and write time-multisets match only when each read takes its preceding write.
 
-The two-shuffle construction of Yang and Heath was originally designed for prime fields where $|F| \geq 2T$. Working over binary extension fields $\mathbb{F}_{2^\lambda}$ requires a straightforward adaptation: the permutation proofs carry over directly, but the timing checks require integer arithmetic — which has no direct analogue in $\mathbb{F}_{2^\lambda}$ since field addition is XOR, not integer addition. The required integer operations (increment and subtraction) are implemented via standard Boolean adder circuits operating on $b$-bit integers represented as authenticated bits. Both operations cost at most $(b - 2)$ multiplications.
+Read-only memory is not a separate construction: a ROM is simply an instance whose every access is a read.
 
-The bit-width $b$ must satisfy $2^b \geq 2T$ to prevent wrap-around attacks on the timing check, so $b = \lceil \log(2T) \rceil$.
+### Protocol
+
+The memory maintains *reads* and *writes* vectors of (address, value, time) tuples and a public **clock** counter starting at 1. The clock is incremented outside the circuit, so all write times are public constants; only the times claimed for reads are prover inputs.
+
+:::{admonition} Protocol: Memory
+:class: protocol
+
+**Setup.** For each address $i$ with initial value $\mathbf{x}[i]$, append $(i, \mathbf{x}[i], 0)$ to *writes*.
+
+**Access.** On each access to address $\text{addr}$, with the clock at public value $c$:
+
+1. **Inputs:** the prover inputs the old value $\text{old}$ and the time $t$ when $\text{addr}$ was last written.
+2. **Timing check:** prove $t < c$ via the [comparator](timing-comparator).
+3. **Write value:** determine the new value $\text{new}$ to write. For a read, $\text{new} = \text{old}$; for a write, $\text{new}$ is the value being stored.
+4. **Append:** append $(\text{addr}, \text{old}, t)$ to *reads* and $(\text{addr}, \text{new}, c)$ to *writes*. The write time $c$ is a public constant.
+5. **Clock:** increment the clock (public bookkeeping, free).
+
+**Teardown.** For each address $i$, the prover inputs the final value and time. These are appended to *reads*. Then: prove *reads* $\sim$ *writes* (permutation proof).
+:::
+
+Every access both reads and writes: a write replaces the old value, and a read writes it back unchanged. The direction is known publicly (each step has fixed read/write slots), so step 3 is a free linear operation.
+
+The teardown time inputs carry no timing check, and none is needed: the permutation proof forces them to equal the final write times.
+
+(timing-comparator)=
+#### Comparator
+
+The timing check asserts $t < c$ for the public clock value $c$ and a committed timestamp $t$, represented in $b = \lceil \log(T + 1) \rceil$ bits, just enough for every clock value. Let $B = c - 1$, a public $b$-bit constant ($B \geq 0$, since $c \geq 1$ at every access). Equivalently, the subtraction $B - t$ over $b$ bits produces no final borrow. The borrow chain is
+
+$$
+\text{bor}_0 = t_0 \cdot \overline{B_0}, \qquad
+\text{bor}_{j} = \begin{cases}
+t_j \lor \text{bor}_{j-1} & B_j = 0 \\
+t_j \land \text{bor}_{j-1} & B_j = 1
+\end{cases}
+$$
+
+and the comparator asserts $\text{bor}_{b-1} = 0$. Because a committed timestamp *is* its $b$ bits, $t \in [0, 2^b)$ holds structurally; for operands in this range the borrow-out of $B - t$ is 1 iff $t > B$, so the check accepts exactly when $t \leq B$, i.e. $t < c$. Evaluating over exactly the operand width leaves no modular wrap-around to exploit.
 
 ### Accelerating Permutation Products
 
@@ -224,166 +261,9 @@ where $e_i$ are committed values and $r$ is a public challenge. The entries $e_i
 
 In the gate-by-gate approach, each intermediate product must be committed, costing $\kappa$ sVOLEs per intermediate. As noted by Yang and Heath, QuickSilver's [polynomial proof protocol](polynomial-proofs) can accelerate these products. The products are split into chunks of $d - 1$ entries, where each chunk is a degree-$d$ polynomial verified using the protocol above. All chunks are batch-verified with a single VOPE correlation. The amortized cost per entry is $\kappa / (d - 1)$ sVOLEs, compared to $\kappa$ sVOLEs in the gate-by-gate approach.
 
-### Read-Only Memory (ROM)
+### Cost
 
-ROM is the simpler building block. It stores $n$ key-value pairs and supports lookups that return the value associated with a key.
-
-The ROM maintains two vectors of tuples: *reads* and *writes*. Each tuple contains a key, a value, and a **version** — an address-specific counter that increments on each lookup.
-
-:::{admonition} Protocol: ROM
-:class: protocol
-
-**Setup.** For each address $i \in [n]$ with value $\mathbf{x}[i]$, append $(i, \mathbf{x}[i], 0)$ to *writes*. These are public wires — the prover does not control the initial versions.
-
-**Lookup.** On each lookup of key $i$, the prover inputs the value $\mathbf{x}[i]$ and the current version $v$. The circuit computes $v + 1$ and appends:
-
-- $(i, \mathbf{x}[i], v)$ to *reads*
-- $(i, \mathbf{x}[i], v + 1)$ to *writes*
-
-**Teardown.** For each address $i$, the prover inputs the final version $v_i$, and $(i, \mathbf{x}[i], v_i)$ is appended to *reads*. Finally, the circuit checks *reads* $\sim$ *writes* (permutation proof).
-:::
-
-**Soundness.** The permutation check forces the prover into building per-key version chains: setup writes version 0 (on public wires, not prover inputs), the first lookup reads 0 and writes 1, the second reads 1 and writes 2, and so on. The prover cannot forge initial values because version 0 is written by the circuit. The prover cannot skip versions because every write must have a matching read.
-
-#### Cost
-
-Let $n$ be the number of entries, $T$ the number of lookups, and $b = \lceil \log(T + 1) \rceil$ the version bit-width. The $n$ setup writes are publicly known, so their contribution to the writes product is computed locally by both parties.
-
-::::{container} side-by-side
-
-:::{container}
-
-```{list-table} Per Lookup
-:header-rows: 1
-
-* -
-  - Cost
-  - Unit
-* - Inputs: value + version
-  - $W + b$
-  - sVOLE
-* - Version increment
-  - $b - 2$
-  - sVOLE
-```
-
-:::
-
-:::{container}
-
-```{list-table} Teardown (one-time)
-:header-rows: 1
-
-* -
-  - Cost
-  - Unit
-* - Final version inputs
-  - $n \cdot b$
-  - sVOLE
-* - Permutation products
-  - $(n + 2T) \cdot \kappa / (d - 1)$
-  - sVOLE
-```
-
-:::
-
-::::
-
-(set-membership)=
-### Set Membership
-
-Set membership is a specialization of ROM with no values — keys only. Given a public set $S = \{s_1, \ldots, s_m\}$, it proves that a private value $x$ belongs to $S$. The RAM uses a set with $S = \{1, \ldots, T\}$ to enforce timing constraints.
-
-:::{admonition} Protocol: Set Membership
-:class: protocol
-
-**Setup.** For each key $s \in S$, append $(s, 0)$ to *writes*.
-
-**Prove-member.** To prove $x \in S$, the prover inputs the current version $v$ for key $x$. The circuit computes $v + 1$ and appends:
-
-- $(x, v)$ to *reads*
-- $(x, v + 1)$ to *writes*
-
-**Teardown.** For each key $s \in S$, the prover inputs the final version. Append to *reads*. Check *reads* $\sim$ *writes* (permutation proof).
-:::
-
-If $x \notin S$, no setup entry exists for $x$, the version chain has no root, and the permutation check fails.
-
-#### Cost
-
-Set membership is ROM with no values. Let $m = |S|$, $T$ the number of queries, and $b = \lceil \log(T + 1) \rceil$. The $m$ setup writes are publicly known, so their contribution to the writes product is computed locally.
-
-::::{container} side-by-side
-
-:::{container}
-
-```{list-table} Per Query
-:header-rows: 1
-
-* -
-  - Cost
-  - Unit
-* - Version input
-  - $b$
-  - sVOLE
-* - Version increment
-  - $b - 2$
-  - sVOLE
-```
-
-:::
-
-:::{container}
-
-```{list-table} Teardown (one-time)
-:header-rows: 1
-
-* -
-  - Cost
-  - Unit
-* - Final version inputs
-  - $m \cdot b$
-  - sVOLE
-* - Permutation products
-  - $(m + 2T) \cdot \kappa / (d - 1)$
-  - sVOLE
-```
-
-:::
-
-::::
-
-### Read/Write Memory
-
-The RAM maintains *reads* and *writes* vectors of (address, value, time) tuples, a **set** $\{1, \ldots, T\}$ for timing checks, and a public **clock** counter starting at 1.
-
-:::{admonition} Protocol: Read/Write Memory
-:class: protocol
-
-**Setup.** For each address $i$ with initial value $\mathbf{x}[i]$, append $(i, \mathbf{x}[i], 0)$ to *writes*. Initialize the timing set with keys $\{1, \ldots, T\}$.
-
-**Access.** On each access to address $\text{addr}$:
-
-1. The prover inputs the old value $\text{old}$ and the time $t$ when $\text{addr}$ was last written.
-2. **Timing check:** Compute $\text{diff} = \text{clock} - t$ and prove $\text{diff} \in \{1, \ldots, T\}$ via set membership.
-3. **Write value:** Determine the new value $\text{new}$ to write. For a read, $\text{new} = \text{old}$. For a write, $\text{new}$ is the value being stored.
-4. Append $(\text{addr}, \text{old}, t)$ to *reads* and $(\text{addr}, \text{new}, \text{clock})$ to *writes*.
-5. Increment clock.
-
-**Teardown.** For each address $i$, the prover inputs the final value and time. These are appended to *reads*. Then: prove *reads* $\sim$ *writes* and teardown the timing set.
-:::
-
-The access direction (read vs write) is known publicly — each step has fixed read/write slots — so step 3 is a linear operation and costs nothing.
-
-**Soundness.** The RAM invariant: before each access to address $i$, *writes* contains exactly one tuple $(i, \text{val}, t)$ not yet matched in *reads*, recording the most recent write.
-
-- **Permutation check** ensures every write is matched by a read and vice versa.
-- **Set membership check** ensures $\text{clock} - t \in \{1, \ldots, T\}$, meaning the claimed write time $t$ is strictly in the past. This prevents the prover from reading values written in the future.
-- Together, these imply the prover must read the most recent write: older writes were already consumed by previous reads and cannot be reused.
-
-#### Cost
-
-Let $W$ be the word size and $b = \lceil \log(2T) \rceil$. The tables below inline the timing [set membership](set-membership) check ($m = T$).
+Let $W$ be the word size. Each access commits its inputs and runs the comparator, whose borrow chain adds $b - 1$ multiplications.
 
 ::::{container} side-by-side
 
@@ -398,14 +278,8 @@ Let $W$ be the word size and $b = \lceil \log(2T) \rceil$. The tables below inli
 * - Inputs: old value + time
   - $W + b$
   - sVOLE
-* - Timing subtraction
-  - $b - 2$
-  - sVOLE
-* - Timing set: version input
-  - $b$
-  - sVOLE
-* - Timing set: version increment
-  - $b - 2$
+* - Comparator
+  - $b - 1$
   - sVOLE
 ```
 
@@ -422,17 +296,16 @@ Let $W$ be the word size and $b = \lceil \log(2T) \rceil$. The tables below inli
 * - Final value + time inputs
   - $n \cdot (W + b)$
   - sVOLE
-* - Timing set: final version inputs
-  - $T \cdot b$
-  - sVOLE
-* - Permutation products (RAM + timing set)
-  - $(2n + 5T) \cdot \kappa / (d - 1)$
+* - Permutation products
+  - $2(n + T) \cdot \kappa / (d - 1)$
   - sVOLE
 ```
 
 :::
 
 ::::
+
+For a ROM with public contents, the teardown inputs drop to $n \cdot b$ and the permutation products to $(n + 2T) \cdot \kappa / (d - 1)$.
 
 ## Concrete Cost
 
@@ -485,9 +358,9 @@ This section instantiates the parametric costs with concrete values to provide h
 * - $\mathbb{F}_2$ multiplication
   - $1$
 * - ROM lookup
-  - $90$
+  - $91$
 * - RAM access
-  - $177$
+  - $96$
 ```
 
 :::
@@ -510,8 +383,10 @@ The following papers provide the foundations for SpeakUp's proof system:
 
 **RAM and Memory Checking**
 
-- [Two Shuffles Make a RAM](https://eprint.iacr.org/2023/1115) — Yang, Heath (2023).
+- Checking the Correctness of Memories — Blum, Evans, Gemmell, Kannan, Naor (1994).
+- [Proving the Correct Execution of Concurrent Services in Zero-Knowledge](https://eprint.iacr.org/2018/907) — Setty, Angel, Gupta, Lee (2018).
+- [Two Shuffles Make a RAM](https://eprint.iacr.org/2023/1115) — Yang, Heath (2024).
 
 **VOLE Extension**
 
-- [Ferret: Fast Extension for Correlated OT with Small Communication](https://eprint.iacr.org/2020/924) — Yang, Weng, Lan, Wang (2020).
+- [Ferret: Fast Extension for Correlated OT with Small Communication](https://eprint.iacr.org/2020/924) — Yang, Weng, Lan, Zhang, Wang (2020).

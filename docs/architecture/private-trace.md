@@ -101,7 +101,7 @@ A multiplication submodule is optional and tunable: a compact bit-serial design 
 
 ## Cost
 
-Each step commits a set of values across the step circuit, one ROM lookup, and two RAM accesses. Every committed bit costs 1 sVOLE. The step circuit is arithmetized as [polynomial constraints](polynomial-proofs) with intermediates folded into higher-degree equations, eliminating their commitments.
+Each step commits values across the step circuit, one ROM lookup, and two RAM accesses: Slot A is a read, Slot B a conditional read-write to one address. Every committed bit costs 1 sVOLE. A memory access commits the value read and the last-write timestamp, then runs the timing [comparator](timing-comparator) ($b - 1$ multiplications; $b$ is the timing bit-width, 21 for the ROM and 22 for the RAM). Slot B's write-back value is computed and committed in the step circuit, so the two accesses carry the same memory-checking cost. The step circuit is arithmetized as [polynomial constraints](polynomial-proofs) with intermediates folded into higher-degree equations, eliminating their commitments.
 
 ::::{container} side-by-side
 
@@ -122,6 +122,15 @@ Each step commits a set of values across the step circuit, one ROM lookup, and t
 * - $n_r$
   - $2^{16}$
   - ROM entries
+* - $W$
+  - $32$
+  - RAM word (bits)
+* - $W_\mu$
+  - $62$
+  - Micro-instruction (bits)
+* - $\kappa, d$
+  - $64, 16$
+  - Product field, batch degree
 ```
 
 :::
@@ -134,13 +143,15 @@ Each step commits a set of values across the step circuit, one ROM lookup, and t
 * - Component
   - sVOLE
 * - ROM lookup
-  - $112$
-* - RAM access × 2
-  - $381$
+  - $113$
+* - RAM read (Slot A)
+  - $115$
+* - RAM read-write (Slot B)
+  - $115$
 * - Step circuit
   - $\approx200$
 * - **Total**
-  - $\approx700$
+  - $\approx540$
 ```
 
 :::
