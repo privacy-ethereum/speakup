@@ -1,0 +1,115 @@
+# Build the Sphinx docs and the browser demo, deploy both to GitHub Pages
+# as one site: docs at the root, demo under /demo/.
+#
+# Both build jobs run on every push: Pages deploys a single atomic
+# artifact, so skipping the demo build on a docs-only push would wipe
+# /demo/ from the site (and vice versa).
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; don't cancel a deploy already in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install drawio
+        run: |
+          curl -sL https://github.com/jgraph/drawio-desktop/releases/download/v29.6.1/drawio-amd64-29.6.1.deb -o drawio.deb
+          sudo dpkg -i drawio.deb || sudo apt-get install -f -y
+
+      - name: Build docs
+        run: xvfb-run make -C docs html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-html
+          path: docs/_build/html
+
+  build-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (pinned nightly, wasm32, rust-src)
+        # demo/speakup-wasm/rust-toolchain.toml names the toolchain; `rustup
+        # toolchain install` reads it (rustup ≥1.28 no longer auto-installs on
+        # use). The same nightly + wasm32 target also covers the guest build
+        # (demo/guests pins the same channel).
+        run: rustup toolchain install
+        working-directory: demo/speakup-wasm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            demo/speakup-wasm
+            demo/guests
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build wasm pkg
+        # The bindings are guest-agnostic now: the guest wasm is built
+        # separately by the web build's `build:guest` step (npm prebuild). The
+        # pkg goes to web/public (served as-is, not bundled) with web-spawn's
+        # no-bundler glue — see the note in demo/web/src/party.worker.ts.
+        run: wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
+        working-directory: demo/speakup-wasm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: demo/web/package-lock.json
+
+      - name: Build site
+        run: |
+          npm ci
+          ./node_modules/.bin/tsc --noEmit
+          npm run build
+        working-directory: demo/web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-dist
+          path: demo/web/dist
+
+  deploy:
+    needs: [build-docs, build-demo]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs-html
+          path: site
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: demo-dist
+          path: site/demo
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

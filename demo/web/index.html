@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SpeakUp Demo</title>
+    <!-- Favicon: the SpeakUp head silhouette (see public/favicon.svg).
+         Relative paths so they resolve under the /speakup/demo/ base. -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="theme-color" content="#f4f3ef" />
+    <!-- Threaded wasm needs cross-origin isolation (SharedArrayBuffer).
+         GitHub Pages can't send COOP/COEP headers, so this service worker
+         injects them (one transparent reload on first visit). No-op where
+         the server already sends them, e.g. the vite dev server. -->
+    <script src="./coi-serviceworker.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1 class="logo">
+        <img src="./logo.svg" alt="SpeakUp" />
+      </h1>
+      <p class="subtitle">zero-knowledge virtual machine, live in your browser</p>
+    </header>
+
+    <main>
+      <section class="guest" aria-label="Guest">
+        <!-- Tabs (one per pre-included example, plus custom) and the example
+             forms are injected by src/examples.ts; only `custom` is static. -->
+        <div class="tabs" id="guest-tabs">
+          <button data-tab="custom">custom</button>
+        </div>
+
+        <div class="pane guest-body" id="guest-body">
+        <!-- Custom guest: write AssemblyScript (compiled to a module) or upload
+             a .wasm, then orchestrate it below. -->
+        <div class="guest-custom" id="custom-config" hidden>
+          <div class="seg" id="custom-mode" role="tablist">
+            <button data-mode="asc" class="active">AssemblyScript</button>
+            <button data-mode="upload">WASM</button>
+          </div>
+
+          <div id="asc-pane">
+            <div class="label">AssemblyScript — compiled to a guest module</div>
+            <div id="asc-editor"></div>
+          </div>
+
+          <div id="upload-pane" hidden>
+            <div class="dropzone" id="dropzone" tabindex="0">
+              drop a <code>.wasm</code> module, or click to browse
+              <span class="dropzone-hint">configure it entirely in the script below</span>
+            </div>
+            <input id="wasm-file" type="file" accept=".wasm,application/wasm" hidden />
+          </div>
+
+          <div class="module-info" id="module-info"></div>
+        </div>
+
+        <!-- Shared orchestration editor (hidden for sha-256 until revealed). -->
+        <div class="editor-wrap" id="editor-wrap" hidden>
+          <div class="label">
+            orchestration — JavaScript against the typed
+            <code>guest</code> API
+          </div>
+          <div id="editor"></div>
+        </div>
+        </div>
+      </section>
+
+      <div class="run-bar">
+        <button id="run">Prove</button>
+      </div>
+
+      <section class="pane stats" aria-label="Statistics">
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="stat-label">
+              <span class="party prover">Prover</span>
+              <span class="arrow">→</span>
+              <span class="party verifier">Verifier</span>
+            </div>
+            <b class="stat-val" id="stat-pv">—</b>
+          </div>
+          <div class="stat">
+            <div class="stat-label">
+              <span class="party verifier">Verifier</span>
+              <span class="arrow">→</span>
+              <span class="party prover">Prover</span>
+            </div>
+            <b class="stat-val" id="stat-vp">—</b>
+          </div>
+          <div class="stat">
+            <div class="stat-label">
+              time
+              <span class="help" tabindex="0" role="note" aria-label="help"
+                    data-tip="End-to-end proving and verification time, running locally on your machine.">
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" />
+                  <circle cx="8" cy="4.6" r="0.95" fill="currentColor" />
+                  <rect x="7.1" y="6.7" width="1.8" height="5.2" rx="0.9" fill="currentColor" />
+                </svg>
+              </span>
+            </div>
+            <b class="stat-val" id="stat-time">—</b>
+          </div>
+          <div class="stat result-box" id="result-box" hidden>
+            <div class="stat-label">result</div>
+            <b class="stat-val result" id="result"></b>
+          </div>
+        </div>
+
+        <button id="cheat" class="cheat" hidden>⚡ tamper with a message</button>
+      </section>
+    </main>
+
+    <footer>
+      <a href="https://privacy-ethereum.github.io/speakup/">Learn more about SpeakUp.</a>
+      This page has no server: nothing you type leaves your browser.
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,65 @@
+# wasm-bindgen bindings for the mpz zk-vm: a generic, guest-agnostic API
+# (load a module, stage public/private/blind memory, call exports, read
+# revealed bytes) that JavaScript drives one step at a time.
+[package]
+name = "speakup-wasm"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# web-spawn's snippet glue that resolves the pkg at runtime instead of through
+# a bundler — needed under wasm-bindgen-test. The app build (vite) uses the
+# default (bundler) glue.
+no-bundler = ["web-spawn/no-bundler"]
+
+[dependencies]
+mpz-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d" }
+mpz-common = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d", features = ["test-utils"] }
+# rayon: parallel transpose/hashing in the KOS/Ferret OT stack. mpz-vm-zk
+# already enables mpz-zk-core/rayon (the QuickSilver check) unconditionally.
+mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d", features = ["rayon"] }
+mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d" }
+mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d" }
+mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d" }
+tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
+web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
+rayon = "1"
+
+futures = "0.3"
+rand = "0.9"
+
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["MessagePort", "MessageEvent", "MessageChannel"] }
+# Pull in all getrandom generations in the dep graph with their browser
+# backends enabled (0.4 via tlsn-mux, 0.3/0.2 via mpz).
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+futures = "0.3"
+wasm-bindgen-test = "0.3"
+# A tiny inline module for the generic-API tests (no guest crate needed).
+wat = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+# Mirrors mpz's own [patch.crates-io]: cargo only honors patches in the
+# top-level workspace, so without this line the demo silently builds the
+# crates.io aes (scalar soft AES) while mpz's benchmarks assume the fork.
+# Fixsliced AES over v128 words on wasm32+simd128 (branch:
+# feat/aes-wasm-simd-word), ~2.6x faster — Ferret's cGGM expansion, CCR
+# hashes and PRG all sit on it. Re-check mpz's patch section on every bump.
+[patch.crates-io]
+aes = { git = "https://github.com/privacy-ethereum/block-ciphers", rev = "5e0ac41ab52a4c81f945d78a06d771c944c7d6b7" }

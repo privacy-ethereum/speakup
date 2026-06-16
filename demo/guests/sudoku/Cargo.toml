@@ -1,0 +1,9 @@
+[package]
+name = "sudoku-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# rlib too, so the branch-free validator can be unit-tested natively.
+[lib]
+crate-type = ["cdylib", "rlib"]

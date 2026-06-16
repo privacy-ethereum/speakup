@@ -1,0 +1,9 @@
+# The guests build to plain wasm32 (NO atomics — the zk-vm rejects them).
+# Pinned to the same nightly as the bindings only so a single toolchain (with
+# the wasm target already installed) covers the whole demo; the guests use no
+# nightly features. Built via ../build-guest.sh, never from the bindings dir,
+# so the shared-memory rustflags in ../speakup-wasm/.cargo/config.toml can't
+# leak in.
+[toolchain]
+channel = "nightly-2026-06-01"
+targets = ["wasm32-unknown-unknown"]

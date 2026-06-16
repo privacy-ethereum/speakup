@@ -1,0 +1,17 @@
+# The guest programs that run on the zk-vm. Edit these, and the demo's
+# build (rust/build.rs) recompiles them to wasm automatically.
+[workspace]
+resolver = "2"
+members = [
+    "sha256",
+    "sudoku",
+]
+
+[workspace.dependencies]
+mpz-vm-sys = { git = "https://github.com/privacy-ethereum/mpz", rev = "69ee9240ff356b1879513910aa4be612532f0f2d" }
+
+# Small, branch-free wasm for the zk-vm.
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"

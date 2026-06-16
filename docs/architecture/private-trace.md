@@ -161,5 +161,3 @@ Each step commits values across the step circuit, one ROM lookup, and two RAM ac
 ## Instruction Step Counts
 
 Most WebAssembly instructions compile to a single step: arithmetic, bitwise ops, shifts, comparisons, memory loads and stores (including sub-word variants), and control-flow branches all fit in one. 64-bit operations take two steps — one per word, with the carry chaining across. Multiplication and division are the expensive instructions, costing many steps each; their exact count depends on the ALU's multiplier submodule. A few instructions (`br_table`, `call`, `return`, `call_indirect`) scale with their operand count.
-
-See the [Cost Explorer](../profile-viewer.md) for instruction distributions from real WebAssembly programs.
