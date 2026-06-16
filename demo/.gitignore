@@ -1,0 +1,8 @@
+target/
+pkg/
+node_modules/
+dist/
+web/src/pkg/
+guests/target/
+.DS_Store
+.playwright-mcp/

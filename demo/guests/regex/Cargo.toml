@@ -1,0 +1,12 @@
+[package]
+name = "regex-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mpz-vm-sys = { workspace = true }
+regex-dfa-core = { path = "../regex-core" }
