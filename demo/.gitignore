@@ -3,6 +3,8 @@ pkg/
 node_modules/
 dist/
 web/src/pkg/
+web/public/guests/
 guests/target/
+speakup-wasm/tests/sha256.wasm
 .DS_Store
 .playwright-mcp/

@@ -1,167 +1,69 @@
 // One zk-vm party in its own worker — its own, isolated wasm memory.
 //
 // The page spawns this file twice: once as the prover, once as the verifier.
-// Each run request carries a transferred MessagePort; the wasm bindings speak
-// the mpz protocol over it, and the page relays the bytes to the peer.
+// Each run request carries a transferred MessagePort and an orchestration
+// script (authored in the page's editor). The worker builds a raw `Party` over
+// the port from the speakup-wasm bindings, wraps it in the demo's role-aware
+// `Vm` facade, then runs the script against that. Both parties run the SAME
+// script; only the inputs (and, hidden inside `Vm`, the role) differ.
+
+import { Private, Public, Vm, helpers, makeGuest, type ExportInfo, type Param, type Role } from "./zkvm";
+
+export type { ExportInfo, Role };
 
 // The wasm pkg is served as plain files (web/public/pkg), NOT bundled: it is
 // built with web-spawn's `no-bundler` glue, which resolves the module and the
 // nested thread workers by URL at runtime. Letting vite bundle it instead
 // inlines the nested worker as a data: URL, whose import.meta.url can't
 // resolve anything — threads would break in production.
-type Pkg = typeof import("../public/pkg/zkvm_demo");
+type Pkg = typeof import("../public/pkg/speakup_wasm");
 
 // ?v=<pkg content hash>: the pkg files keep stable names and GitHub Pages
 // caches them for 10 minutes, so without this a warm browser would pair
 // freshly-deployed page code with the previous deploy's glue/wasm.
 const pkgUrl = new URL(
-  `${import.meta.env.BASE_URL}pkg/zkvm_demo.js?v=${__PKG_VERSION__}`,
+  `${import.meta.env.BASE_URL}pkg/speakup_wasm.js?v=${__PKG_VERSION__}`,
   self.location.origin,
 ).href;
 // Passed to init explicitly: the glue's own fallback resolves the wasm
 // relative to import.meta.url, which would drop the version query.
 const wasmUrl = new URL(
-  `${import.meta.env.BASE_URL}pkg/zkvm_demo_bg.wasm?v=${__PKG_VERSION__}`,
+  `${import.meta.env.BASE_URL}pkg/speakup_wasm_bg.wasm?v=${__PKG_VERSION__}`,
   self.location.origin,
 );
 
-export type Role = "prover" | "verifier";
-
-/// Programs with a fixed, embedded guest module (everything but `custom`).
-export type EmbeddedProgram =
-  | "square"
-  | "age"
-  | "sha256"
-  | "regex"
-  | "luhn"
-  | "csv"
-  | "json"
-  | "transcript";
-
-/// The embedded HTTPS-transcript fixture, parsed by the prover's worker
-/// with the transcript-verify host parser (off the VM).
-export interface TranscriptInfo {
-  sent: string;
-  recv: string;
-  method: string;
-  target: string;
-  host: string;
-  status: number;
-  /// Whether the request carries a body (covered as opaque private bytes).
-  reqBody: boolean;
-  /// Every scalar JSON path of the response body, with value previews.
-  paths: { path: string; value: string }[];
-  /// The header lines of each side, in wire order — claimable as
-  /// `req:<i>` / `resp:<i>` claim strings.
-  reqHeaders: { name: string; value: string }[];
-  respHeaders: { name: string; value: string }[];
+/// A run request: the orchestration script, the guest module bytes, and the
+/// inputs. `pub` reaches both parties. `priv` reaches both too, but only the
+/// prover's carries real secret bytes — the verifier's are a same-length
+/// placeholder (it only ever needs the length, for the blind write). `role`
+/// selects which party to build; the script itself never sees it.
+export interface RunRequest {
+  type: "run";
+  role: Role;
+  script: string;
+  wasm: Uint8Array;
+  pub: Record<string, unknown>;
+  priv: Record<string, unknown>;
+  /// The configured scalar arguments (public/private per the panel), ready to
+  /// spread into a `guest` call. Private values are zeroed for the verifier.
+  args: Param[];
 }
 
-export type PartyRequest =
-  | { type: "guest_info"; program: EmbeddedProgram }
-  | { type: "inspect"; wasm: Uint8Array }
-  | { type: "transcript_info" }
-  // `claim` is `json:<path>`, `req:<i>`, or `resp:<i>`;
-  // `expect` null = disclose the value; a string = assert equality.
-  | { type: "transcript_public"; claim: string; expect: string | null }
-  | { type: "json_info"; doc: string }
-  | { type: "json_public"; doc: string; path: string; expect: string | null }
-  | {
-      type: "run";
-      role: Role;
-      program: "custom";
-      wasm: Uint8Array;
-      func: string;
-      vis: Uint8Array; // 1 where the argument is the prover's private input
-      values: BigInt64Array; // ignored at private positions on the verifier
-    }
-  | { type: "run"; role: Role; program: "square"; x: number }
-  | { type: "run"; role: Role; program: "age"; birthdate: string; today: number }
-  | {
-      type: "run";
-      role: Role;
-      program: "sha256";
-      message: Uint8Array; // empty on the verifier side
-      msgLen: number;
-    }
-  | {
-      type: "run";
-      role: Role;
-      program: "regex";
-      pattern: string; // public: both sides get it
-      text: string; // empty on the verifier side
-      textLen: number;
-    }
-  | {
-      type: "run";
-      role: Role;
-      program: "luhn";
-      number: string; // empty on the verifier side
-      numLen: number;
-    }
-  | {
-      type: "run";
-      role: Role;
-      program: "csv";
-      csv: string; // empty on the verifier side
-      len: number;
-      col: number; // public: both sides get them
-      threshold: number;
-    }
-  | {
-      type: "run";
-      role: Role;
-      program: "json";
-      doc: string; // empty on the verifier side
-      path: string; // the prover re-derives everything from doc+path+expect
-      expect: string | null; // null = disclose, string = assert equality
-      words: Uint32Array; // the public table; all the verifier ever gets
-    }
-  | {
-      type: "run";
-      role: Role;
-      program: "transcript";
-      claim: string; // the prover re-derives everything from these two
-      expect: string | null; // null = disclose, string = assert equality
-      words: Uint32Array; // the public table; all the verifier ever gets
-    };
-
-/// One exported function of an inspected module.
-export interface ExportInfo {
-  name: string;
-  params: string[]; // "i32" | "i64" | "f32" | "f64"
-  results: string[];
-  supported: boolean;
+/// Parse a module's exported functions (no protocol, no port) so the page can
+/// build the typed `guest` API, autocomplete, and the argument panel.
+export interface InspectRequest {
+  type: "inspect";
+  wasm: Uint8Array;
 }
+
+export type PartyRequest = RunRequest | InspectRequest;
 
 export type PartyResponse =
   | { type: "ready" }
   | { type: "done"; result: string; ms: number }
   | { type: "error"; message: string }
-  | { type: "guest_info"; program: EmbeddedProgram; size: number; sha256: string }
-  | { type: "exports"; exports?: ExportInfo[]; error?: string }
-  | { type: "transcript_info"; info?: TranscriptInfo; error?: string }
-  | {
-      type: "transcript_public";
-      claim: string;
-      expect: string | null; // echoed so the page can match stale answers
-      words?: Uint32Array;
-      error?: string;
-    }
-  | {
-      type: "json_info";
-      doc: string; // echoed so the page can match stale answers
-      paths?: { path: string; value: string }[];
-      error?: string;
-    }
-  | {
-      type: "json_public";
-      doc: string;
-      path: string;
-      expect: string | null;
-      words?: Uint32Array;
-      error?: string;
-    };
+  | { type: "exports"; exports: ExportInfo[] }
+  | { type: "exports-error"; message: string };
 
 const post = (msg: PartyResponse) => self.postMessage(msg);
 
@@ -189,104 +91,24 @@ const initialized = (async () => {
   }
 })();
 
+/// The exported function names of `wasm`, for the `guest` facade.
+const exportNames = (wasm: Uint8Array): string[] =>
+  (JSON.parse(pkg.module_exports(wasm)) as ExportInfo[]).map((e) => e.name);
+
 self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
   await initialized;
   if (initError) return; // already reported; nothing can run
   const msg = ev.data;
-  if (msg.type === "guest_info") {
-    // Facts about this party's own embedded module — the page shows both
-    // parties' answers side by side, so "same module, same hash" is
-    // something visitors can check, not just read.
-    const bytes = pkg.guest_wasm(msg.program);
-    const digest = await crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer);
-    const sha256 = [...new Uint8Array(digest)]
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    post({ type: "guest_info", program: msg.program, size: bytes.length, sha256 });
-    return;
-  }
-  if (msg.type === "transcript_info") {
-    // The embedded fixture, parsed off the VM with the transcript-verify
-    // host parser — the page builds the claim line and path dropdown.
-    try {
-      post({ type: "transcript_info", info: JSON.parse(pkg.transcript_info()) });
-    } catch (e) {
-      post({ type: "transcript_info", error: e instanceof Error ? e.message : String(e) });
-    }
-    return;
-  }
-  if (msg.type === "transcript_public") {
-    // The flat public table for one claim: the page relays it to the
-    // verifier, which never touches the transcript bytes.
-    try {
-      post({
-        type: "transcript_public",
-        claim: msg.claim,
-        expect: msg.expect,
-        words: pkg.transcript_public_inputs(msg.claim, msg.expect ?? undefined),
-      });
-    } catch (e) {
-      post({
-        type: "transcript_public",
-        claim: msg.claim,
-        expect: msg.expect,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-    return;
-  }
-  if (msg.type === "json_info") {
-    // The user's document, parsed off the VM with the transcript-verify
-    // host parser — the page builds the path dropdown from the answer.
-    try {
-      const parsed = JSON.parse(pkg.json_info(msg.doc)) as {
-        paths: { path: string; value: string }[];
-      };
-      post({ type: "json_info", doc: msg.doc, paths: parsed.paths });
-    } catch (e) {
-      post({
-        type: "json_info",
-        doc: msg.doc,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-    return;
-  }
-  if (msg.type === "json_public") {
-    // The flat public table for one claim: the page relays it to the
-    // verifier, which never touches the document bytes.
-    try {
-      post({
-        type: "json_public",
-        doc: msg.doc,
-        path: msg.path,
-        expect: msg.expect,
-        words: pkg.json_public_inputs(msg.doc, msg.path, msg.expect ?? undefined),
-      });
-    } catch (e) {
-      post({
-        type: "json_public",
-        doc: msg.doc,
-        path: msg.path,
-        expect: msg.expect,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-    return;
-  }
+
   if (msg.type === "inspect") {
-    // Parse the user's module and report its exported functions, so the
-    // page can build the argument UI from the real signatures.
     try {
       post({ type: "exports", exports: JSON.parse(pkg.module_exports(msg.wasm)) });
     } catch (e) {
-      post({
-        type: "exports",
-        error: e instanceof Error ? e.message : String(e),
-      });
+      post({ type: "exports-error", message: e instanceof Error ? e.message : String(e) });
     }
     return;
   }
+
   if (msg.type !== "run") return;
   const port = ev.ports[0];
   if (!port) {
@@ -295,69 +117,38 @@ self.onmessage = async (ev: MessageEvent<PartyRequest>) => {
   }
   try {
     const start = performance.now();
-    let result: string;
-    switch (msg.program) {
-      case "square":
-        result = String(
-          msg.role === "prover"
-            ? await pkg.prover_square(port, msg.x)
-            : await pkg.verifier_square(port),
-        );
-        break;
-      case "age":
-        result = String(
-          msg.role === "prover"
-            ? await pkg.prover_age(port, msg.birthdate, msg.today)
-            : await pkg.verifier_age(port, msg.today),
-        );
-        break;
-      case "sha256":
-        result =
-          msg.role === "prover"
-            ? await pkg.prover_sha256(port, msg.message)
-            : await pkg.verifier_sha256(port, msg.msgLen);
-        break;
-      case "regex":
-        result = String(
-          msg.role === "prover"
-            ? await pkg.prover_regex(port, msg.pattern, msg.text)
-            : await pkg.verifier_regex(port, msg.pattern, msg.textLen),
-        );
-        break;
-      case "custom":
-        result =
-          msg.role === "prover"
-            ? await pkg.prover_custom(port, msg.wasm, msg.func, msg.vis, msg.values)
-            : await pkg.verifier_custom(port, msg.wasm, msg.func, msg.vis, msg.values);
-        break;
-      case "luhn":
-        result = String(
-          msg.role === "prover"
-            ? await pkg.prover_luhn(port, msg.number)
-            : await pkg.verifier_luhn(port, msg.numLen),
-        );
-        break;
-      case "csv":
-        result = String(
-          msg.role === "prover"
-            ? await pkg.prover_csv(port, msg.csv, msg.col, msg.threshold)
-            : await pkg.verifier_csv(port, msg.len, msg.col, msg.threshold),
-        );
-        break;
-      case "json":
-        result =
-          msg.role === "prover"
-            ? await pkg.prover_json(port, msg.doc, msg.path, msg.expect ?? undefined)
-            : await pkg.verifier_json(port, msg.words);
-        break;
-      case "transcript":
-        result =
-          msg.role === "prover"
-            ? await pkg.prover_transcript(port, msg.claim, msg.expect ?? undefined)
-            : await pkg.verifier_transcript(port, msg.words);
-        break;
-    }
-    post({ type: "done", result, ms: performance.now() - start });
+    const party =
+      msg.role === "prover"
+        ? pkg.Party.prover(port, msg.wasm)
+        : pkg.Party.verifier(port, msg.wasm);
+    const vm = new Vm(party, msg.role);
+    // The typed API for this module: `guest.<export>(...params)`.
+    const guest = makeGuest(vm, exportNames(msg.wasm));
+    // The orchestration is user-authored JS (from the page's editor). It runs
+    // in this worker's isolated wasm memory; this is a local, serverless demo,
+    // so the only code it can touch is the visitor's own.
+    const run = new Function(
+      "vm",
+      "guest",
+      "args",
+      "pub",
+      "priv",
+      "Public",
+      "Private",
+      "helpers",
+      `"use strict";\nreturn (async () => {\n${msg.script}\n})();`,
+    ) as (
+      vm: Vm,
+      guest: ReturnType<typeof makeGuest>,
+      args: Param[],
+      pub: Record<string, unknown>,
+      priv: Record<string, unknown>,
+      pub_: typeof Public,
+      priv_: typeof Private,
+      h: typeof helpers,
+    ) => Promise<unknown>;
+    const result = await run(vm, guest, msg.args, msg.pub, msg.priv, Public, Private, helpers);
+    post({ type: "done", result: String(result ?? ""), ms: performance.now() - start });
   } catch (e) {
     post({ type: "error", message: e instanceof Error ? e.message : String(e) });
   }

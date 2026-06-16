@@ -48,26 +48,29 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust (pinned nightly, wasm32, rust-src)
-        # demo/rust/rust-toolchain.toml names the toolchain; `rustup toolchain
-        # install` reads it (rustup ≥1.28 no longer auto-installs on use).
+        # demo/speakup-wasm/rust-toolchain.toml names the toolchain; `rustup
+        # toolchain install` reads it (rustup ≥1.28 no longer auto-installs on
+        # use). The same nightly + wasm32 target also covers the guest build
+        # (demo/guests pins the same channel).
         run: rustup toolchain install
-        working-directory: demo/rust
+        working-directory: demo/speakup-wasm
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            demo/rust
+            demo/speakup-wasm
             demo/guests
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm pkg
-        # build.rs compiles guests/ to wasm32 as part of this. The pkg goes to
-        # web/public (served as-is, not bundled) with web-spawn's no-bundler
-        # glue — see the note in demo/web/src/party.worker.ts.
+        # The bindings are guest-agnostic now: the guest wasm is built
+        # separately by the web build's `build:guest` step (npm prebuild). The
+        # pkg goes to web/public (served as-is, not bundled) with web-spawn's
+        # no-bundler glue — see the note in demo/web/src/party.worker.ts.
         run: wasm-pack build --release --target web --out-dir ../web/public/pkg -- --features no-bundler
-        working-directory: demo/rust
+        working-directory: demo/speakup-wasm
 
       - uses: actions/setup-node@v4
         with:

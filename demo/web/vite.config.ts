@@ -46,7 +46,7 @@ const coiServiceworker = (): Plugin => ({
 const pkgVersion = (() => {
   try {
     const h = createHash("sha256");
-    for (const f of ["zkvm_demo.js", "zkvm_demo_bg.wasm"]) {
+    for (const f of ["speakup_wasm.js", "speakup_wasm_bg.wasm"]) {
       h.update(readFileSync(new URL(`./public/pkg/${f}`, import.meta.url)));
     }
     return h.digest("hex").slice(0, 8);
@@ -61,8 +61,11 @@ export default defineConfig({
   base: "/speakup/demo/",
   define: { __PKG_VERSION__: JSON.stringify(pkgVersion) },
   plugins: [coiServiceworker()],
-  // The guest sources are ?raw-imported from ../guests for the
-  // "view full source" modal.
-  server: { fs: { allow: [".."] }, headers: coiHeaders },
+  server: { headers: coiHeaders },
   preview: { headers: coiHeaders },
+  // The AssemblyScript compiler (lazy-loaded for the custom tab) uses top-level
+  // await; the threaded-wasm app already targets modern browsers, so build for
+  // esnext (covers both the production build and dev pre-bundling).
+  build: { target: "esnext" },
+  optimizeDeps: { esbuildOptions: { target: "esnext" } },
 });

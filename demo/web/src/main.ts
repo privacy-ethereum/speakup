@@ -1,866 +1,407 @@
 import { FEATURES } from "./config";
-import type {
-  EmbeddedProgram,
-  ExportInfo,
-  PartyRequest,
-  PartyResponse,
-  Role,
-  TranscriptInfo,
-} from "./party.worker";
+import type { PartyRequest, PartyResponse, Role } from "./party.worker";
+import type { ExportInfo } from "./zkvm";
+import { EXAMPLES, exampleForm, exampleTab, type MountedForm } from "./examples";
+import { initTabs } from "./tabs";
+import { initTooltips } from "./tooltip";
 import "./style.css";
 
-// The real guest sources, embedded verbatim for the "view full source"
-// modal — the same files build.rs compiles into the modules both parties run.
-import squareSrc from "../../guests/square/src/lib.rs?raw";
-import ageSrc from "../../guests/age/src/lib.rs?raw";
-import sha256Src from "../../guests/sha256/src/lib.rs?raw";
-import regexSrc from "../../guests/regex/src/lib.rs?raw";
-import regexCoreSrc from "../../guests/regex-core/src/lib.rs?raw";
-import luhnSrc from "../../guests/luhn/src/lib.rs?raw";
-import csvSrc from "../../guests/csv/src/lib.rs?raw";
-import jsonSrc from "../../guests/json/src/lib.rs?raw";
-import jsonCoreSrc from "../../guests/transcript-core/src/json.rs?raw";
-import transcriptSrc from "../../guests/transcript/src/lib.rs?raw";
-import transcriptCoreSrc from "../../guests/transcript-core/src/lib.rs?raw";
+import { EditorView, basicSetup } from "codemirror";
+import { javascript, javascriptLanguage } from "@codemirror/lang-javascript";
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 
-// One worker per party: two isolated wasm memories. The prover's secrets
-// physically cannot be in the verifier's address space. Spawned (and on
-// abort, re-spawned) by `spawnWorker` below.
+// One worker per party: two isolated wasm memories, so the secret physically
+// cannot be in the other's address space. Spawned (and re-spawned on abort) by
+// `spawnWorker`. The page relays their messages and counts the traffic.
 const workers = {} as Record<Role, Worker>;
 
 const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 const runBtn = $<HTMLButtonElement>("run");
-const tabs = $("program-tabs");
-const xInput = $<HTMLInputElement>("x-input");
-const dateInput = $<HTMLInputElement>("date-input");
-const textInput = $<HTMLInputElement>("text-input");
-const regexTextInput = $<HTMLInputElement>("regex-text-input");
-const patternRow = $("pattern-row");
-const patternInput = $<HTMLInputElement>("pattern-input");
-const customRow = $("custom-row");
-const dropzone = $("dropzone");
-const wasmFileInput = $<HTMLInputElement>("wasm-file");
-const customConfig = $("custom-config");
-const funcSelect = $<HTMLSelectElement>("func-select");
-const paramRows = $("param-rows");
-const cardInput = $<HTMLInputElement>("card-input");
-const csvInput = $<HTMLTextAreaElement>("csv-input");
-const csvRow = $("csv-row");
-const jsonInput = $<HTMLTextAreaElement>("json-input");
-const jsonRow = $("json-row");
-const jsonClaim = $("json-claim");
-const jsonPath = $<HTMLSelectElement>("json-path");
-const jsonMode = $<HTMLSelectElement>("json-mode");
-const jsonExpect = $<HTMLInputElement>("json-expect");
-const transcriptInput = $<HTMLTextAreaElement>("transcript-input");
-const transcriptRow = $("transcript-row");
-const transcriptClaim = $("transcript-claim");
-const transcriptPath = $<HTMLSelectElement>("transcript-path");
-const transcriptMode = $<HTMLSelectElement>("transcript-mode");
-const transcriptExpect = $<HTMLInputElement>("transcript-expect");
-const colInput = $<HTMLInputElement>("col-input");
-const thresholdInput = $<HTMLInputElement>("threshold-input");
-const inputLabel = $("input-label");
-const proverSource = $("prover-source");
-const verifierSource = $("verifier-source");
-const proverLog = $("prover-log");
-const verifierLog = $("verifier-log");
-const blindCell = $("blind-cell");
-const channel = $("channel");
-const channelStatus = $("channel-status");
+const statPv = $("stat-pv");
+const statVp = $("stat-vp");
+const statTime = $("stat-time");
 const resultBox = $("result-box");
 const resultEl = $("result");
-const delaySlider = $<HTMLInputElement>("delay-slider");
-const delayValue = $("delay-value");
 const cheatBtn = $<HTMLButtonElement>("cheat");
-const shaPresets = $("sha-presets");
-const proverWasmInfo = $("prover-wasm-info");
-const verifierWasmInfo = $("verifier-wasm-info");
-const fullSourceBtns = [
-  $<HTMLButtonElement>("prover-full-source"),
-  $<HTMLButtonElement>("verifier-full-source"),
-];
-const sourceModal = $("source-modal");
-const sourceModalTitle = $("source-modal-title");
-const sourceModalCode = $("source-modal-code");
-const sourceModalClose = $<HTMLButtonElement>("source-modal-close");
 
-type ProgramKey =
-  | "square"
-  | "age"
-  | "sha256"
-  | "regex"
-  | "luhn"
-  | "csv"
-  | "json"
-  | "transcript"
-  | "ecdsa"
-  | "custom";
-
-/// Today as the packed YYYYMMDD integer the age guest expects.
-const todayPacked = () => {
-  const d = new Date();
-  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-};
+const guestTabs = $("guest-tabs");
+const guestBody = $("guest-body");
+const customConfig = $("custom-config");
+const editorWrap = $("editor-wrap");
+const customModeEl = $("custom-mode");
+const ascPane = $("asc-pane");
+const uploadPane = $("upload-pane");
+const dropzone = $("dropzone");
+const wasmFileInput = $<HTMLInputElement>("wasm-file");
+const moduleInfo = $("module-info");
 
 const utf8len = (s: string) => new TextEncoder().encode(s).length;
-const hatch = (n: number) => `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n} bytes)`;
-
-interface Program {
-  source: string;
-  /// The real guest crate source, shown in the "view full source" modal.
-  /// Absent for `custom`, where there is no source to show.
-  fullSource?: { title: string; code: string };
-  /// The embedded module to show wasm facts for. Absent for `custom`,
-  /// whose facts come from the dropped file itself.
-  module?: EmbeddedProgram;
-  /// Prover-pane private input element. Absent for `custom`, whose
-  /// arguments all live in the center panel.
-  input?: HTMLInputElement | HTMLTextAreaElement;
-  inputLabel: string;
-  /// Center-column public input row, if the program has one.
-  centerRow?: HTMLElement;
-  /// Per-role requests, or an error message for invalid input.
-  requests(): { prover: PartyRequest; verifier: PartyRequest } | string;
-  /// What the verifier's blind view of the input looks like.
-  blind(): string;
-  proverStage(): string;
-  /// Renders the revealed result as (display text, css class, log line).
-  render(result: string): { text: string; cls: string; log: string };
-  secretName: string;
-}
-
-// --- json document state (filled by the prover worker's answers) ---
-
-/// Scalar paths of the current document, or `null` while (re)parsing.
-let jsonPaths: { path: string; value: string }[] | null = null;
-/// The flat public table for the current claim, and the (doc, path,
-/// expect) triple it was computed for (guards against stale tables).
-let jsonWords: Uint32Array | null = null;
-let jsonWordsKey = "";
-
-/// `null` = disclose mode; a string = assert the field equals it.
-const jsonExpectValue = (): string | null =>
-  jsonMode.value === "assert" ? jsonExpect.value : null;
-const jsonKey = () => {
-  const e = jsonExpectValue();
-  return `${jsonInput.value}\u0000${jsonPath.value}\u0000${e === null ? "\u0000<disclose>" : e}`;
-};
-
-// --- transcript fixture state (filled by the prover worker's answers) ---
-
-let transcriptInfo: TranscriptInfo | null = null;
-/// The flat public table for the current claim, and the (path, expect)
-/// pair it was computed for (guards against running with a stale table).
-let transcriptWords: Uint32Array | null = null;
-let transcriptWordsKey = "";
-
-/// `null` = disclose mode; a string = assert the field equals it.
-const transcriptExpectValue = (): string | null =>
-  transcriptMode.value === "assert" ? transcriptExpect.value : null;
-const transcriptKey = () => {
-  const e = transcriptExpectValue();
-  return `${transcriptPath.value}\u0000${e === null ? "\u0000<disclose>" : e}`;
-};
-
-const PROGRAMS: Record<ProgramKey, Program> = {
-  square: {
-    source: `fn compute(x: i32) -> i32 {
-    reveal((x + 1) * (x + 1))
-}`,
-    fullSource: { title: "guests/square/src/lib.rs", code: squareSrc },
-    module: "square",
-    input: xInput,
-    inputLabel: "private input x",
-    requests() {
-      const x = Number(xInput.value);
-      if (!Number.isInteger(x)) return "x must be an integer";
-      return {
-        prover: { type: "run", role: "prover", program: "square", x },
-        verifier: { type: "run", role: "verifier", program: "square", x: 0 },
-      };
-    },
-    blind: () => "░░░░░░░░",
-    proverStage: () => `staging private input x = ${xInput.value}`,
-    render(result) {
-      return { text: result, cls: "", log: `result: ${result}` };
-    },
-    secretName: "x",
-  },
-  age: {
-    source: `fn is_adult(today: i32) -> i32 {
-    let date = load_birthdate(); // private
-    reveal(age_flag(&date, today))
-}`,
-    fullSource: { title: "guests/age/src/lib.rs", code: ageSrc },
-    module: "age",
-    input: dateInput,
-    inputLabel: "private birth date",
-    requests() {
-      const birthdate = dateInput.value;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(birthdate)) return "pick a birth date";
-      const today = todayPacked();
-      return {
-        prover: { type: "run", role: "prover", program: "age", birthdate, today },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "age",
-          birthdate: "",
-          today,
-        },
-      };
-    },
-    blind: () => "░░░░░░░░░░ (10 bytes)",
-    proverStage: () => `staging private birth date ${dateInput.value}`,
-    render(result) {
-      const adult = result === "1";
-      return {
-        text: adult ? "✓ 18 or older" : "✗ not proven 18+",
-        cls: adult ? "ok" : "no",
-        log: adult
-          ? "proved: 18 or older"
-          : "not proven: under 18 (or invalid date)",
-      };
-    },
-    secretName: "the birth date",
-  },
-  sha256: {
-    source: `fn hash(msg: &[u8]) -> [u8; 32] {
-    reveal_bytes(sha256(msg)) // digest only
-}`,
-    fullSource: { title: "guests/sha256/src/lib.rs", code: sha256Src },
-    module: "sha256",
-    input: textInput,
-    inputLabel: "private message",
-    requests() {
-      const bytes = new TextEncoder().encode(textInput.value);
-      if (bytes.length === 0) return "message must not be empty";
-      if (bytes.length > 131072) return "message too long (max 128 KB)";
-      return {
-        prover: {
-          type: "run",
-          role: "prover",
-          program: "sha256",
-          message: bytes,
-          msgLen: bytes.length,
-        },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "sha256",
-          message: new Uint8Array(),
-          msgLen: bytes.length,
-        },
-      };
-    },
-    blind: () => hatch(utf8len(textInput.value)),
-    proverStage: () => `staging private message (${utf8len(textInput.value)} bytes)`,
-    render(result) {
-      return {
-        text: result,
-        cls: "digest",
-        log: `digest: ${result.slice(0, 16)}…`,
-      };
-    },
-    secretName: "the message",
-  },
-  regex: {
-    source: `fn matches(text: &[u8]) -> i32 {
-    // DFA compiled from the public pattern,
-    // evaluated obliviously over the
-    // private text — branch-free
-    reveal(dfa_matches(&TABLE, text))
-}`,
-    fullSource: {
-      title: "guests/regex/src/lib.rs (+ regex-core)",
-      code: `${regexSrc}\n// ───── guests/regex-core/src/lib.rs ─────\n\n${regexCoreSrc}`,
-    },
-    module: "regex",
-    input: regexTextInput,
-    inputLabel: "private test string",
-    centerRow: patternRow,
-    requests() {
-      const pattern = patternInput.value;
-      if (!pattern) return "enter a pattern";
-      const text = regexTextInput.value;
-      const len = utf8len(text);
-      if (len === 0) return "test string must not be empty";
-      if (len > 256) return "test string too long (max 256 bytes)";
-      return {
-        prover: { type: "run", role: "prover", program: "regex", pattern, text, textLen: len },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "regex",
-          pattern,
-          text: "",
-          textLen: len,
-        },
-      };
-    },
-    blind: () => hatch(utf8len(regexTextInput.value)),
-    proverStage: () =>
-      `staging private test string (${utf8len(regexTextInput.value)} bytes)`,
-    render(result) {
-      const m = result === "1";
-      return {
-        text: m ? "✓ matches the pattern" : "✗ no match",
-        cls: m ? "ok" : "no",
-        log: m ? "proved: text matches the pattern" : "no match proven",
-      };
-    },
-    secretName: "the test string",
-  },
-  luhn: {
-    source: `fn check(len: i32) -> i32 {
-    // Luhn checksum over the private
-    // digits, branch-free
-    reveal(luhn_valid(&NUMBER[..len]))
-}`,
-    fullSource: { title: "guests/luhn/src/lib.rs", code: luhnSrc },
-    module: "luhn",
-    input: cardInput,
-    inputLabel: "private card number",
-    requests() {
-      const number = cardInput.value.replace(/[\s-]/g, "");
-      if (!/^\d{12,19}$/.test(number)) return "enter 12-19 digits";
-      return {
-        prover: { type: "run", role: "prover", program: "luhn", number, numLen: number.length },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "luhn",
-          number: "",
-          numLen: number.length,
-        },
-      };
-    },
-    blind() {
-      const n = cardInput.value.replace(/[\s-]/g, "").length;
-      return `${"░".repeat(Math.max(1, Math.min(n, 24)))} (${n} digits)`;
-    },
-    proverStage() {
-      const n = cardInput.value.replace(/[\s-]/g, "").length;
-      return `staging private card number (${n} digits)`;
-    },
-    render(result) {
-      const ok = result === "1";
-      return {
-        text: ok ? "✓ valid checksum" : "✗ invalid checksum",
-        cls: ok ? "ok" : "no",
-        log: ok ? "proved: the number passes Luhn" : "checksum does not pass",
-      };
-    },
-    secretName: "the card number",
-  },
-  csv: {
-    source: `fn mean_at_least(len, col, t) -> i32 {
-    // the WHOLE document is private; the
-    // guest parses it inside the VM:
-    // tracks columns, builds numbers,
-    // sums column \`col\` — branch-free
-    reveal(parse_and_compare(len, col, t))
-}`,
-    fullSource: { title: "guests/csv/src/lib.rs", code: csvSrc },
-    module: "csv",
-    input: csvInput,
-    inputLabel: "private CSV document",
-    centerRow: csvRow,
-    requests() {
-      // Normalize: drop spaces and \r, ensure a trailing newline.
-      const csv =
-        csvInput.value.replace(/[ \r]/g, "").replace(/\n+$/, "") + "\n";
-      const len = utf8len(csv);
-      if (csv.trim() === "") return "paste a CSV document";
-      if (len > 8192) return "CSV too large (max 8 KB)";
-      if (!/^[0-9,\n]+$/.test(csv)) {
-        return "cells must be plain numbers (digits, commas, newlines only)";
-      }
-      const col = Number(colInput.value);
-      if (!Number.isInteger(col) || col < 0 || col > 15) {
-        return "column must be 0..15";
-      }
-      const threshold = Number(thresholdInput.value);
-      if (!Number.isInteger(threshold) || threshold < 0 || threshold > 99999) {
-        return "threshold must be an integer 0..99999";
-      }
-      return {
-        prover: { type: "run", role: "prover", program: "csv", csv, len, col, threshold },
-        verifier: { type: "run", role: "verifier", program: "csv", csv: "", len, col, threshold },
-      };
-    },
-    blind() {
-      const len = utf8len(
-        csvInput.value.replace(/[ \r]/g, "").replace(/\n+$/, "") + "\n",
-      );
-      return `${"░".repeat(Math.max(1, Math.min(len, 24)))} (${len} bytes)`;
-    },
-    proverStage() {
-      const rows = csvInput.value.split("\n").filter((r) => r.trim()).length;
-      return `staging private CSV (${rows} rows — row count stays private too)`;
-    },
-    render(result) {
-      const ok = result === "1";
-      return {
-        text: ok ? "✓ column average ≥ threshold" : "✗ not proven",
-        cls: ok ? "ok" : "no",
-        log: ok
-          ? "proved: well-formed CSV, column mean reaches the threshold"
-          : "not proven: mean below threshold or malformed CSV",
-      };
-    },
-    secretName: "the document (contents, row count, and sum)",
-  },
-  json: {
-    source: `fn verify_json(...) -> i32 {
-    // the public node table (parsed
-    // OUTSIDE the VM) drives the walk;
-    // every private byte is checked at
-    // its claimed position, branch-free
-    // — incl. "field == expected"
-    reveal(ok) // or reveal_bytes(value)
-}`,
-    fullSource: {
-      title: "guests/json/src/lib.rs (+ transcript-core/src/json.rs)",
-      code: `${jsonSrc}\n// ───── guests/transcript-core/src/json.rs ─────\n\n${jsonCoreSrc}`,
-    },
-    module: "json",
-    input: jsonInput,
-    inputLabel: "private JSON document — edit me",
-    centerRow: jsonRow,
-    requests() {
-      if (!jsonPaths) return "the document hasn't parsed yet — fix it and try again";
-      if (!jsonPaths.length) return "the document has no scalar fields to claim";
-      const path = jsonPath.value;
-      const expect = jsonExpectValue();
-      if (!jsonWords || jsonWordsKey !== jsonKey()) {
-        return "public inputs still computing — try again";
-      }
-      return {
-        prover: {
-          type: "run",
-          role: "prover",
-          program: "json",
-          doc: jsonInput.value,
-          path,
-          expect,
-          words: new Uint32Array(),
-        },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "json",
-          doc: "",
-          path: "",
-          expect,
-          words: jsonWords,
-        },
-      };
-    },
-    blind() {
-      const len = utf8len(jsonInput.value);
-      return `░░░░░░░░░░░░ (${len} bytes — structure public, contents hidden)`;
-    },
-    proverStage: () =>
-      `staging private JSON document (${utf8len(jsonInput.value)} bytes)`,
-    render(result) {
-      let parsed: { ok: number; value: string };
-      try {
-        parsed = JSON.parse(result);
-      } catch {
-        return { text: result, cls: "", log: `result: ${result}` };
-      }
-      const path = jsonPath.value || "(document root)";
-      const expect = jsonExpectValue();
-      if (parsed.ok === 1) {
-        return expect === null
-          ? {
-              text: `✓ ${path} = ${JSON.stringify(parsed.value)}`,
-              cls: "ok",
-              log: `proved the document and disclosed ${path} = ${JSON.stringify(parsed.value)}`,
-            }
-          : {
-              text: `✓ ${path} = ${JSON.stringify(expect)} — proven`,
-              cls: "ok",
-              log: `proved the document and that ${path} = ${JSON.stringify(expect)} — the value itself was never sent`,
-            };
-      }
-      return {
-        text: "✗ not proven",
-        cls: "no",
-        log:
-          expect === null
-            ? "the document does not match the claimed parse"
-            : `not proven: ${path} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
-      };
-    },
-    secretName: "the document (every field other than the claim)",
-  },
-  transcript: {
-    source: `fn verify_transcript(...) -> i32 {
-    // the public span table (parsed
-    // OUTSIDE the VM by transcript-verify)
-    // drives the walk; every private byte
-    // is checked at its claimed position,
-    // branch-free — incl. "field == expected"
-    reveal(ok) // or reveal_bytes(value)
-}`,
-    fullSource: {
-      title: "guests/transcript/src/lib.rs (+ transcript-core)",
-      code: `${transcriptSrc}\n// ───── guests/transcript-core/src/lib.rs ─────\n\n${transcriptCoreSrc}`,
-    },
-    module: "transcript",
-    input: transcriptInput,
-    inputLabel: "private transcript — a captured HTTPS exchange",
-    centerRow: transcriptRow,
-    requests() {
-      if (!transcriptInfo) return "the fixture is still loading — try again";
-      const claim = transcriptPath.value;
-      if (!claim) return "pick a field to claim";
-      const expect = transcriptExpectValue();
-      if (!transcriptWords || transcriptWordsKey !== transcriptKey()) {
-        return "public inputs still computing — try again";
-      }
-      return {
-        prover: {
-          type: "run",
-          role: "prover",
-          program: "transcript",
-          claim,
-          expect,
-          words: new Uint32Array(),
-        },
-        verifier: {
-          type: "run",
-          role: "verifier",
-          program: "transcript",
-          claim: "",
-          expect,
-          words: transcriptWords,
-        },
-      };
-    },
-    blind() {
-      if (!transcriptInfo) return "—";
-      const total = utf8len(transcriptInfo.sent) + utf8len(transcriptInfo.recv);
-      return `░░░░░░░░░░░░ (${total} bytes — structure public, contents hidden)`;
-    },
-    proverStage() {
-      const total = transcriptInfo
-        ? utf8len(transcriptInfo.sent) + utf8len(transcriptInfo.recv)
-        : 0;
-      return `staging private transcript (${total} bytes)`;
-    },
-    render(result) {
-      let parsed: { ok: number; value: string };
-      try {
-        parsed = JSON.parse(result);
-      } catch {
-        return { text: result, cls: "", log: `result: ${result}` };
-      }
-      const label =
-        transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value;
-      const expect = transcriptExpectValue();
-      if (parsed.ok === 1) {
-        return expect === null
-          ? {
-              text: `✓ ${label} = ${JSON.stringify(parsed.value)}`,
-              cls: "ok",
-              log: `proved the exchange and disclosed ${label} = ${JSON.stringify(parsed.value)}`,
-            }
-          : {
-              text: `✓ ${label} = ${JSON.stringify(expect)} — proven`,
-              cls: "ok",
-              log: `proved the exchange and that ${label} = ${JSON.stringify(expect)} — the value itself was never sent`,
-            };
-      }
-      return {
-        text: "✗ not proven",
-        cls: "no",
-        log:
-          expect === null
-            ? "the transcript does not match the claimed parse"
-            : `not proven: ${label} ≠ ${JSON.stringify(expect)} (or the parse is invalid)`,
-      };
-    },
-    secretName: "the transcript (every header and field other than the claims)",
-  },
-  // Placeholder: no guest exists yet. The tab shows what's planned and the
-  // Run button explains itself; everything else (guest crate, bindings,
-  // worker plumbing) lands with the implementation.
-  ecdsa: {
-    source: `// coming soon
-//
-// fn verify(msg, sig, pubkey) -> i32 {
-//     // verify an ECDSA signature
-//     // INSIDE the zk-vm: prove a
-//     // private message carries a
-//     // valid signature, revealing
-//     // neither message nor signature
-//     reveal(ecdsa_verify(...))
-// }`,
-    inputLabel: "private message & signature",
-    requests() {
-      return "ecdsa is not implemented yet — coming soon";
-    },
-    blind: () => "—",
-    proverStage: () => "",
-    render(result) {
-      return { text: result, cls: "", log: `result: ${result}` };
-    },
-    secretName: "the message and signature",
-  },
-  custom: {
-    source: `// drop a compiled guest module
-// to inspect its exports`,
-    inputLabel: "private input",
-    centerRow: customRow,
-    requests() {
-      if (!customWasm) return "drop a .wasm guest first";
-      const exp = selectedExport();
-      if (!exp || !exp.supported) return "pick a supported function";
-      const n = exp.params.length;
-      const vis = new Uint8Array(n);
-      const values = new BigInt64Array(n);
-      const blindValues = new BigInt64Array(n);
-      for (let i = 0; i < n; i++) {
-        let v: bigint;
-        try {
-          v = BigInt(paramValue(i).value.trim());
-        } catch {
-          return `arg${i} must be an integer`;
-        }
-        const lim = exp.params[i] === "i32" ? 31n : 63n;
-        if (v < -(2n ** lim) || v >= 2n ** lim) {
-          return `arg${i} is out of ${exp.params[i]} range`;
-        }
-        const priv = paramPrivate(i).checked;
-        vis[i] = priv ? 1 : 0;
-        values[i] = v;
-        blindValues[i] = priv ? 0n : v; // the verifier never sees private values
-      }
-      const base = {
-        type: "run" as const,
-        program: "custom" as const,
-        wasm: customWasm.bytes,
-        func: exp.name,
-        vis,
-      };
-      return {
-        prover: { ...base, role: "prover" as const, values },
-        verifier: { ...base, role: "verifier" as const, values: blindValues },
-      };
-    },
-    blind() {
-      const exp = selectedExport();
-      if (!customWasm || !exp) return "—";
-      return exp.params
-        .map((ty, i) =>
-          paramPrivate(i).checked ? `░░░░ (${ty})` : `${paramValue(i).value} (public)`,
-        )
-        .join(" · ");
-    },
-    proverStage() {
-      const exp = selectedExport();
-      const n = exp ? exp.params.filter((_, i) => paramPrivate(i).checked).length : 0;
-      return `staging ${n} private argument${n === 1 ? "" : "s"}`;
-    },
-    render(result) {
-      return { text: result, cls: "", log: `result: ${result}` };
-    },
-    secretName: "the private input",
-  },
-};
-
-let current: ProgramKey = "square";
-
-const log = (el: HTMLElement, text: string, cls = "") => {
-  const line = document.createElement("div");
-  line.className = `log-line ${cls}`;
-  line.textContent = text;
-  el.appendChild(line);
-  el.scrollTop = el.scrollHeight;
-};
-
-const clearLogs = () => {
-  proverLog.replaceChildren();
-  verifierLog.replaceChildren();
-};
-
 const fmtBytes = (n: number) =>
   n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+const fmtMs = (ms: number) => (ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`);
 
-/// Asks both parties for facts about their embedded module; each pane shows
-/// its own party's answer when it arrives (see the `guest_info` case below).
-const requestGuestInfo = (p: Program) => {
-  proverWasmInfo.textContent = "";
-  verifierWasmInfo.textContent = "";
-  if (!p.module) return;
-  const req: PartyRequest = { type: "guest_info", program: p.module };
-  workers.prover.postMessage(req);
-  workers.verifier.postMessage(req);
+// --- orchestration scripts (per example, plus the custom tab) ---
+
+const CUSTOM_SCRIPT = `// Drop a .wasm module above, then orchestrate it here against the typed
+// \`guest\` API (autocomplete lists its exports once a module loads). Example:
+//
+//   const ptr = await guest.cabi_realloc(Public(0), Public(0), Public(1), Public(64));
+//   vm.writePrivate(ptr, priv.message);
+//   const out = await guest.hash(Public(ptr), Public(0));
+//   return helpers.hex(vm.read(out, 32));
+
+return "load a module and write your orchestration";
+`;
+
+const scripts: Record<string, string> = {
+  ...Object.fromEntries(EXAMPLES.map((ex) => [ex.id, ex.script])),
+  custom: CUSTOM_SCRIPT,
 };
 
-const selectProgram = (key: ProgramKey) => {
-  current = key;
-  const p = PROGRAMS[key];
-  for (const btn of tabs.querySelectorAll("button")) {
-    btn.classList.toggle("active", btn.dataset.program === key);
-  }
-  for (const other of Object.values(PROGRAMS)) {
-    if (other.input) other.input.hidden = true;
-    if (other.centerRow) other.centerRow.hidden = true;
-  }
-  if (p.input) p.input.hidden = false;
-  // No prover-pane input for custom: its arguments live in the center panel.
-  (inputLabel.parentElement as HTMLElement).hidden = !p.input;
-  shaPresets.hidden = key !== "sha256";
-  if (p.centerRow) p.centerRow.hidden = false;
-  inputLabel.textContent = p.inputLabel;
-  proverSource.textContent = p.source;
-  verifierSource.textContent = p.source;
-  // The fixture is parsed once, lazily, by the prover's worker.
-  if (key === "transcript" && !transcriptInfo) {
-    workers.prover.postMessage({ type: "transcript_info" } satisfies PartyRequest);
-  }
-  // The (editable) document is parsed lazily on first entry; edits
-  // re-parse via the input listener.
-  if (key === "json" && !jsonPaths) requestJsonInfo();
-  for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
-  requestGuestInfo(p);
-  if (key === "custom" && customInfoLine) {
-    proverWasmInfo.textContent = customInfoLine;
-    verifierWasmInfo.textContent = customInfoLine;
-  }
-  blindCell.textContent = p.blind();
-  resultBox.hidden = true;
-  clearLogs();
+// --- the editor (CodeMirror) ---
+
+const API_COMPLETIONS = [
+  { label: "vm.callLocal", type: "method", detail: "(name, params) → number", info: "Call a local (non-interactive) export — e.g. an allocator or pointer getter." },
+  { label: "vm.call", type: "method", detail: "(name, params) → Promise<number>", info: "Call an interactive export (returns a Promise)." },
+  { label: "vm.writePrivate", type: "method", detail: "(ptr, bytes)", info: "Stage a private input at ptr. The prover contributes the bytes; the verifier blinds by their length." },
+  { label: "vm.writePublic", type: "method", detail: "(ptr, bytes)", info: "Stage public bytes (known to both) at ptr." },
+  { label: "vm.read", type: "method", detail: "(ptr, len) → Uint8Array", info: "Read len revealed bytes at ptr." },
+  { label: "Public", type: "function", detail: '(value, ty = "i32") → Param', info: "A public call argument (known to both parties)." },
+  { label: "Private", type: "function", detail: '(value, ty = "i32") → Param', info: "A private call argument: the prover contributes the value, the verifier blinds it automatically." },
+  { label: "helpers.hex", type: "function", detail: "(bytes) → string", info: "Lowercase hex of a byte array." },
+  { label: "helpers.utf8", type: "function", detail: "(string) → Uint8Array" },
+  { label: "helpers.text", type: "function", detail: "(bytes) → string" },
+  { label: "pub", type: "variable", info: "Public inputs (both parties)." },
+  { label: "priv", type: "variable", info: "Private inputs (the prover's secret)." },
+  { label: "guest", type: "variable", info: "The typed API for the loaded module — one method per export." },
+] satisfies Completion[];
+
+// Per-module completions for the typed `guest` API, refreshed on every inspect.
+let guestCompletions: Completion[] = [];
+
+const apiCompletions = (ctx: CompletionContext): CompletionResult | null => {
+  const word = ctx.matchBefore(/[\w.]+/);
+  if (!word || (word.from === word.to && !ctx.explicit)) return null;
+  return {
+    from: word.from,
+    options: [...API_COMPLETIONS, ...guestCompletions],
+    validFor: /^[\w.]*$/,
+  };
 };
 
-tabs.addEventListener("click", (ev) => {
-  const btn = (ev.target as HTMLElement).closest("button");
-  if (btn?.dataset.program) selectProgram(btn.dataset.program as ProgramKey);
+const editorTheme = EditorView.theme({
+  "&": { height: "100%", backgroundColor: "var(--panel)" },
+  ".cm-gutters": { backgroundColor: "var(--panel)" },
+  ".cm-scroller": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "13px",
+  },
 });
 
-// Preset messages for the sha-256 program: deterministic filler of an exact
-// size, so runs are reproducible and the cost scaling is visible.
-shaPresets.addEventListener("click", (ev) => {
-  const btn = (ev.target as HTMLElement).closest("button");
-  if (!btn?.dataset.size) return;
-  const size = Number(btn.dataset.size);
-  textInput.value = "speakup demo data ".repeat(Math.ceil(size / 18)).slice(0, size);
-  blindCell.textContent = PROGRAMS.sha256.blind();
+const editor = new EditorView({
+  doc: scripts[EXAMPLES[0].id],
+  extensions: [
+    basicSetup,
+    javascript(),
+    javascriptLanguage.data.of({ autocomplete: apiCompletions }),
+    editorTheme,
+  ],
+  parent: $("editor"),
 });
 
-// --- custom module (dropped .wasm) ---
-
-const CUSTOM_WASM_CAP = 1 << 20; // 1 MB — guests are tens of KB
-
-let customWasm: { name: string; bytes: Uint8Array } | null = null;
-let customExports: ExportInfo[] = [];
-/// The wasm-info line for the loaded file, restored when re-entering the tab.
-let customInfoLine = "";
-
-const selectedExport = () => customExports.find((e) => e.name === funcSelect.value);
-const paramValue = (i: number) => $<HTMLInputElement>(`param-value-${i}`);
-const paramPrivate = (i: number) => $<HTMLInputElement>(`param-priv-${i}`);
-
-const fmtSig = (e: ExportInfo) =>
-  `${e.name}(${e.params.join(", ")})${e.results.length ? ` -> ${e.results.join(", ")}` : ""}`;
-
-/// One row per argument of the selected function: a value input and a
-/// private toggle. The first argument defaults to private.
-const buildParamRows = () => {
-  paramRows.replaceChildren();
-  const exp = selectedExport();
-  if (!exp) return;
-  exp.params.forEach((ty, i) => {
-    const row = document.createElement("div");
-    row.className = "param-row";
-    const name = document.createElement("span");
-    name.className = "param-name";
-    name.textContent = `arg${i} (${ty})`;
-    const value = document.createElement("input");
-    value.type = "text";
-    value.inputMode = "numeric";
-    value.value = "0";
-    value.id = `param-value-${i}`;
-    value.addEventListener("input", () => {
-      blindCell.textContent = PROGRAMS.custom.blind();
-    });
-    const privLabel = document.createElement("label");
-    privLabel.className = "param-priv";
-    const priv = document.createElement("input");
-    priv.type = "checkbox";
-    priv.checked = i === 0;
-    priv.id = `param-priv-${i}`;
-    priv.addEventListener("change", () => {
-      blindCell.textContent = PROGRAMS.custom.blind();
-    });
-    privLabel.append(priv, " private");
-    row.append(name, value, privLabel);
-    paramRows.append(row);
-  });
-  blindCell.textContent = PROGRAMS.custom.blind();
+const setEditor = (doc: string) => {
+  editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: doc } });
 };
 
-/// The prover worker's answer to an `inspect` request.
-const onExports = (msg: { exports?: ExportInfo[]; error?: string }) => {
-  if (!customWasm) return;
-  if (msg.error || !msg.exports) {
-    const reason = (msg.error ?? "no exports").replace(/\s+/g, " ");
-    dropzone.textContent = `not a valid Speakup guest: ${
-      reason.length > 90 ? `${reason.slice(0, 90)}…` : reason
-    }`;
-    customWasm = null;
-    customInfoLine = "";
-    return;
-  }
-  customExports = msg.exports;
-  const supported = customExports.filter((e) => e.supported);
-  funcSelect.replaceChildren();
-  for (const e of customExports) {
-    const opt = document.createElement("option");
-    opt.value = e.name;
-    opt.textContent = fmtSig(e) + (e.supported ? "" : " — unsupported");
-    opt.disabled = !e.supported;
-    funcSelect.append(opt);
-  }
-  if (!supported.length) {
-    dropzone.textContent = `${customWasm.name}: no callable exports (i32/i64 scalars only)`;
-    return;
-  }
-  funcSelect.value = supported[0].name;
-  buildParamRows();
-  customConfig.hidden = false;
-  dropzone.textContent = `${customWasm.name} · ${fmtBytes(customWasm.bytes.length)} ✓ — drop another to replace`;
-  const src = supported.map((e) => `fn ${fmtSig(e)}`).join("\n");
-  proverSource.textContent = src;
-  verifierSource.textContent = src;
+// --- the AssemblyScript source editor (custom tab, default mode) ---
+
+const DEFAULT_ASC = `// AssemblyScript compiles to a wasm guest. This one proves a private number x
+// lies within a range whose bounds lo and hi are PUBLIC inputs (passed as
+// Public(...) below). Only the 1/0 result is revealed, never x.
+export function inRange(x: i32, lo: i32, hi: i32): i32 {
+  return i32(x >= lo) * i32(x <= hi);
+}
+`;
+
+const ascEditor = new EditorView({
+  doc: DEFAULT_ASC,
+  extensions: [
+    basicSetup,
+    javascript({ typescript: true }),
+    editorTheme,
+    EditorView.updateListener.of((u) => {
+      if (u.docChanged) scheduleAscCompile();
+    }),
+  ],
+  parent: $("asc-editor"),
+});
+
+// --- the guest module (built-in sha256, or a dropped .wasm) ---
+
+const CUSTOM_WASM_CAP = 4 << 20; // 4 MB — guests are tens of KB
+
+interface GuestModule {
+  name: string;
+  wasm: Uint8Array;
+  builtin: boolean;
+  exports: ExportInfo[] | null;
+}
+
+const exampleModules = new Map<string, GuestModule>(); // built-ins, by example id
+const exampleForms = new Map<string, MountedForm>(); // mounted form panes, by id
+let customModule: GuestModule | null = null;
+let pendingInspect: GuestModule | null = null;
+const inspectQueue: GuestModule[] = []; // one inspect in flight at a time
+let lastCustomStarter = CUSTOM_SCRIPT; // the starter we last wrote (vs user edits)
+let forceStarterRegen = false; // bypass the no-clobber gate once (on mode switch)
+
+const currentModule = () =>
+  currentTab === "custom" ? customModule : exampleModules.get(currentTab) ?? null;
+
+const sha256Hex = async (bytes: Uint8Array) => {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-const loadWasmFile = async (file: File) => {
+const renderModuleInfo = async (m: GuestModule) => {
+  const hash = (await sha256Hex(m.wasm)).slice(0, 8);
+  const n = m.exports ? m.exports.filter((e) => e.supported).length : 0;
+  const note = m.exports ? ` · ${n} callable export(s)` : " · inspecting…";
+  moduleInfo.textContent = `${m.name} · ${fmtBytes(m.wasm.length)} · sha-256 ${hash}…${note}`;
+};
+
+const refreshGuestCompletions = () => {
+  const exports = currentModule()?.exports ?? [];
+  guestCompletions = exports.map((e) => ({
+    label: `guest.${e.name}`,
+    type: "method",
+    detail: `(${e.params.join(", ")})${e.results.length ? ` → ${e.results.join(",")}` : ""}`,
+    info: e.supported
+      ? "Calls this export interactively (returns a Promise)."
+      : "Unsupported: the zk-vm calls only i32/i64 scalar functions.",
+  }));
+};
+
+/// A starter orchestration listing a module's exports and calling the first
+/// scalar one over a private argument — so a freshly compiled/dropped module
+/// runs immediately.
+const customStarter = (m: GuestModule) => {
+  const supported = (m.exports ?? []).filter((e) => e.supported);
+  const lines = supported
+    .map((e) => `//   ${e.name}(${e.params.join(", ")})${e.results.length ? ` -> ${e.results.join(",")}` : ""}`)
+    .join("\n");
+  const first = supported[0];
+  // First argument is the prover's secret; any further arguments are public.
+  // Sensible placeholders: a secret of 42 within public bounds 18..65 (so the
+  // default inRange(42, 18, 65) reads as "is my age in [18, 65]?" → yes).
+  const publicVals = [18, 65, 100, 1, 7];
+  const arg = (i: number) => (i === 0 ? "Private(42)" : `Public(${publicVals[(i - 1) % publicVals.length]})`);
+  const call = first
+    ? `return await guest.${first.name}(${first.params.map((_, i) => arg(i)).join(", ")});`
+    : `return "no callable i32/i64 exports";`;
+  return `// Loaded ${m.name}. Exported functions:
+${lines || "//   (no callable i32/i64 exports)"}
+//
+// Orchestrate against the typed \`guest\` API: Private(x) is the prover's secret,
+// Public(x) is shared with both parties.
+${call}
+`;
+};
+
+// The prover worker inspects one module at a time; queue so concurrent requests
+// (e.g. several built-ins loading at once) don't clobber `pendingInspect`.
+const inspectModule = (m: GuestModule) => {
+  inspectQueue.push(m);
+  drainInspect();
+};
+
+const drainInspect = () => {
+  if (pendingInspect || inspectQueue.length === 0) return;
+  pendingInspect = inspectQueue.shift()!;
+  workers.prover.postMessage({ type: "inspect", wasm: pendingInspect.wasm } satisfies PartyRequest);
+};
+
+const onExports = (exports: ExportInfo[]) => {
+  const m = pendingInspect;
+  pendingInspect = null;
+  if (m) {
+    m.exports = exports;
+    if (m === customModule) {
+      void renderModuleInfo(m);
+      // Refresh the starter orchestration when the user hasn't edited it (so
+      // recompiling AS as you type doesn't discard your script), or always on a
+      // mode switch (so switching back to AS shows the AS starter, not the
+      // previous WASM module's).
+      const current = currentTab === "custom" ? editor.state.doc.toString() : scripts.custom;
+      if (forceStarterRegen || current === lastCustomStarter) {
+        scripts.custom = lastCustomStarter = customStarter(m);
+        if (currentTab === "custom") setEditor(scripts.custom);
+      }
+      forceStarterRegen = false;
+    }
+    if (m === currentModule()) refreshGuestCompletions();
+  }
+  drainInspect();
+};
+
+const onExportsError = (message: string) => {
+  pendingInspect = null;
+  moduleInfo.textContent = `failed to parse module: ${message}`;
+  guestCompletions = [];
+  drainInspect();
+};
+
+/// Adopt freshly produced wasm (an upload or an AssemblyScript compile) as the
+/// custom module: render its facts, inspect its exports, reveal the orchestration.
+const setCustomWasm = (name: string, wasm: Uint8Array) => {
+  customModule = { name, wasm, builtin: false, exports: null };
+  void renderModuleInfo(customModule);
+  inspectModule(customModule);
+  applyVisibility();
+};
+
+const loadFile = async (file: File) => {
   if (file.size > CUSTOM_WASM_CAP) {
-    dropzone.textContent = `${file.name} is too big (max ${fmtBytes(CUSTOM_WASM_CAP)})`;
+    moduleInfo.textContent = `${file.name} is too large (max ${fmtBytes(CUSTOM_WASM_CAP)})`;
     return;
   }
-  const buffer = await file.arrayBuffer();
-  customWasm = { name: file.name, bytes: new Uint8Array(buffer) };
-  customExports = [];
-  customConfig.hidden = true;
-  dropzone.textContent = `${file.name} · ${fmtBytes(file.size)} — inspecting…`;
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  const sha256 = [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  customInfoLine = `wasm ${fmtBytes(file.size)} · sha-256 ${sha256.slice(0, 8)}…`;
-  proverWasmInfo.textContent = customInfoLine;
-  verifierWasmInfo.textContent = customInfoLine;
-  workers.prover.postMessage({ type: "inspect", wasm: customWasm.bytes } satisfies PartyRequest);
+  setCustomWasm(file.name, new Uint8Array(await file.arrayBuffer()));
 };
+
+// --- AssemblyScript compilation (lazy: the compiler loads on first use) ---
+
+type Asc = typeof import("assemblyscript/asc")["default"];
+let asc: Asc | null = null;
+let ascTimer: number | undefined;
+let ascSeq = 0; // drops results from superseded compiles
+
+const scheduleAscCompile = () => {
+  window.clearTimeout(ascTimer);
+  ascTimer = window.setTimeout(compileAsc, 400);
+};
+
+const compileAsc = async () => {
+  const source = ascEditor.state.doc.toString();
+  const seq = ++ascSeq;
+  moduleInfo.textContent = "compiling AssemblyScript…";
+  try {
+    asc ??= (await import("assemblyscript/asc")).default;
+    const { error, stderr, binary } = await asc.compileString(source, {
+      optimizeLevel: 3,
+      runtime: "stub",
+    });
+    if (seq !== ascSeq) return; // a newer edit already started compiling
+    if (error || !binary) {
+      customModule = null;
+      forceStarterRegen = false;
+      moduleInfo.textContent = `AssemblyScript error: ${error?.message ?? "compile failed"}\n${String(stderr)}`.trim();
+      guestCompletions = [];
+      applyVisibility();
+      return;
+    }
+    setCustomWasm("assemblyscript.wasm", new Uint8Array(binary));
+  } catch (e) {
+    if (seq !== ascSeq) return;
+    customModule = null;
+    forceStarterRegen = false;
+    moduleInfo.textContent = `AssemblyScript error: ${e instanceof Error ? e.message : String(e)}`;
+    applyVisibility();
+  }
+};
+
+const fetchWasm = async (url: string): Promise<Uint8Array> => {
+  const res = await fetch(`${import.meta.env.BASE_URL}${url}`);
+  if (!res.ok) {
+    throw new Error(`guest wasm not found (HTTP ${res.status}) — run \`npm run build:guest\``);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+};
+
+// --- guest tabs & the view-script toggle ---
+
+// Mount one tab + form per example before the static `custom` entries; the
+// first example starts active. This is the only place examples touch the DOM.
+const customTabBtn = guestTabs.querySelector<HTMLButtonElement>('[data-tab="custom"]')!;
+EXAMPLES.forEach((ex, i) => {
+  guestTabs.insertBefore(exampleTab(ex, i === 0), customTabBtn);
+  const form = exampleForm(ex);
+  guestBody.insertBefore(form.el, customConfig);
+  exampleForms.set(ex.id, form);
+});
+
+const isExample = (tab: string) => exampleForms.has(tab);
+
+let currentTab = EXAMPLES[0].id;
+let scriptShown = false;
+
+/// Reflect `scriptShown` on every example's "view script" toggle.
+const updateToggles = () => {
+  for (const btn of guestBody.querySelectorAll<HTMLButtonElement>(".js-view-script")) {
+    btn.textContent = scriptShown ? "hide script ▾" : "view script ▸";
+  }
+};
+
+const applyVisibility = () => {
+  for (const [id, form] of exampleForms) form.el.hidden = currentTab !== id;
+  customConfig.hidden = currentTab !== "custom";
+  // The editor shows for an example only when revealed, and for custom only once
+  // a module has been provided (nothing to orchestrate without one).
+  editorWrap.hidden = isExample(currentTab) ? !scriptShown : customModule === null;
+};
+
+const selectTab = (tab: string) => {
+  scripts[currentTab] = editor.state.doc.toString();
+  currentTab = tab;
+  setEditor(scripts[tab]);
+  if (isExample(tab)) {
+    scriptShown = false;
+    updateToggles();
+  }
+  applyVisibility();
+  refreshGuestCompletions();
+  // First visit to the custom tab in AS mode: compile the default source.
+  if (tab === "custom" && customMode === "asc" && customModule === null) compileAsc();
+};
+
+initTabs(guestTabs, selectTab);
+applyVisibility(); // show only the active example's form on load
+
+// The example forms each carry a "view script" toggle (js-view-script).
+guestBody.addEventListener("click", (ev) => {
+  if (!(ev.target as HTMLElement).closest(".js-view-script")) return;
+  scriptShown = !scriptShown;
+  updateToggles();
+  applyVisibility();
+});
+
+// --- custom tab: AssemblyScript vs upload mode ---
+
+let customMode: "asc" | "upload" = "asc";
+
+const applyCustomMode = () => {
+  ascPane.hidden = customMode !== "asc";
+  uploadPane.hidden = customMode !== "upload";
+  for (const b of customModeEl.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
+    b.classList.toggle("active", b.dataset.mode === customMode);
+  }
+  if (customMode === "asc") {
+    forceStarterRegen = true; // show the AS starter, not the prior WASM module's
+    compileAsc(); // the AS source is now the source of truth
+  } else {
+    customModule = null; // wait for an upload
+    moduleInfo.textContent = "drop a .wasm module to begin";
+    applyVisibility();
+  }
+};
+
+customModeEl.addEventListener("click", (ev) => {
+  const mode = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-mode]")?.dataset.mode;
+  if ((mode !== "asc" && mode !== "upload") || mode === customMode) return;
+  customMode = mode;
+  applyCustomMode();
+});
 
 dropzone.addEventListener("click", () => wasmFileInput.click());
 dropzone.addEventListener("dragover", (ev) => {
@@ -872,316 +413,63 @@ dropzone.addEventListener("drop", (ev) => {
   ev.preventDefault();
   dropzone.classList.remove("drag");
   const file = ev.dataTransfer?.files[0];
-  if (file) void loadWasmFile(file);
+  if (file) void loadFile(file);
 });
 wasmFileInput.addEventListener("change", () => {
   const file = wasmFileInput.files?.[0];
-  if (file) void loadWasmFile(file);
+  if (file) void loadFile(file);
   wasmFileInput.value = "";
 });
-funcSelect.addEventListener("change", buildParamRows);
 
-// --- json document plumbing ---
-
-/// Truncates a value preview for the dropdown.
-const preview = (v: string) => (v.length > 28 ? `${v.slice(0, 28)}…` : v);
-
-/// Asks the prover's worker to (re)parse the document into scalar paths.
-const requestJsonInfo = () => {
-  jsonPaths = null;
-  jsonWords = null;
-  jsonClaim.textContent = "parsing…";
-  workers.prover.postMessage({
-    type: "json_info",
-    doc: jsonInput.value,
-  } satisfies PartyRequest);
-};
-
-/// Asks the prover's worker for the flat public table of the selected
-/// claim (document + path + mode + expected value).
-const requestJsonWords = () => {
-  jsonWords = null;
-  workers.prover.postMessage({
-    type: "json_public",
-    doc: jsonInput.value,
-    path: jsonPath.value,
-    expect: jsonExpectValue(),
-  } satisfies PartyRequest);
-};
-
-/// Prefills the expected-value input with the selected field's actual
-/// value (edit it to watch the proof legitimately fail).
-const prefillJsonExpect = () => {
-  const v = jsonPaths?.find((p) => p.path === jsonPath.value);
-  if (v) jsonExpect.value = v.value;
-  jsonExpect.hidden = jsonMode.value !== "assert";
-};
-
-/// The prover worker's answer to a `json_info` request: fill the claim
-/// line and the path dropdown, keeping the selection where possible.
-const onJsonInfo = (msg: {
-  doc: string;
-  paths?: { path: string; value: string }[];
-  error?: string;
-}) => {
-  // Stale answer for a document the user has since edited.
-  if (msg.doc !== jsonInput.value) return;
-  if (!msg.paths) {
-    jsonClaim.textContent = `✗ ${msg.error ?? "the document failed to parse"}`;
-    jsonPath.replaceChildren();
-    return;
-  }
-  jsonPaths = msg.paths;
-  jsonClaim.textContent =
-    `valid JSON · ${utf8len(msg.doc)} bytes · ` +
-    `${msg.paths.length} scalar field${msg.paths.length === 1 ? "" : "s"}`;
-  const previous = jsonPath.value;
-  jsonPath.replaceChildren();
-  for (const p of msg.paths) {
-    const opt = document.createElement("option");
-    opt.value = p.path;
-    opt.textContent = `${p.path || "(document root)"} = ${JSON.stringify(preview(p.value))}`;
-    jsonPath.append(opt);
-  }
-  const def =
-    msg.paths.find((p) => p.path === previous) ??
-    msg.paths.find((p) => p.path === "accounts.CHF") ??
-    msg.paths[0];
-  if (def) jsonPath.value = def.path;
-  prefillJsonExpect();
-  if (msg.paths.length) requestJsonWords();
-  if (current === "json") blindCell.textContent = PROGRAMS.json.blind();
-};
-
-const onJsonPublic = (msg: {
-  doc: string;
-  path: string;
-  expect: string | null;
-  words?: Uint32Array;
-  error?: string;
-}) => {
-  // Stale answer for a claim the user has since changed.
-  if (
-    msg.doc !== jsonInput.value ||
-    msg.path !== jsonPath.value ||
-    msg.expect !== jsonExpectValue()
-  ) {
-    return;
-  }
-  if (!msg.words) {
-    log(proverLog, `public inputs failed: ${msg.error ?? "unknown"}`, "err");
-    return;
-  }
-  jsonWords = msg.words;
-  jsonWordsKey = jsonKey();
-};
-
-jsonInput.addEventListener("input", () => {
-  requestJsonInfo();
-  blindCell.textContent = PROGRAMS.json.blind();
-});
-jsonPath.addEventListener("change", () => {
-  prefillJsonExpect();
-  requestJsonWords();
-});
-jsonMode.addEventListener("change", () => {
-  jsonExpect.hidden = jsonMode.value !== "assert";
-  requestJsonWords();
-});
-jsonExpect.addEventListener("input", requestJsonWords);
-
-// --- transcript fixture plumbing ---
-
-/// Resolves the selected claim string (`json:<path>`, `req:<i>`,
-/// `resp:<i>`) to a display label and the claimed field's actual value
-/// (for prefilling the expected-value input).
-const transcriptClaimInfo = (
-  claim: string,
-): { label: string; value: string } | null => {
-  if (!transcriptInfo) return null;
-  if (claim.startsWith("req:") || claim.startsWith("resp:")) {
-    const req = claim.startsWith("req:");
-    const list = req ? transcriptInfo.reqHeaders : transcriptInfo.respHeaders;
-    const h = list[Number(claim.slice(claim.indexOf(":") + 1))];
-    return h
-      ? { label: `${req ? "request" : "response"} header ${h.name}`, value: h.value }
-      : null;
-  }
-  const path = claim.startsWith("json:") ? claim.slice(5) : claim;
-  const p = transcriptInfo.paths.find((x) => x.path === path);
-  return p ? { label: path, value: p.value } : null;
-};
-
-/// Asks the prover's worker for the flat public table of the selected
-/// claim (field + mode + expected value).
-const requestTranscriptWords = () => {
-  const claim = transcriptPath.value;
-  if (!claim) return;
-  transcriptWords = null;
-  workers.prover.postMessage({
-    type: "transcript_public",
-    claim,
-    expect: transcriptExpectValue(),
-  } satisfies PartyRequest);
-};
-
-/// Prefills the expected-value input with the selected field's actual
-/// value (edit it to watch the proof legitimately fail).
-const prefillTranscriptExpect = () => {
-  const v = transcriptClaimInfo(transcriptPath.value);
-  if (v) transcriptExpect.value = v.value;
-  transcriptExpect.hidden = transcriptMode.value !== "assert";
-};
-
-/// The prover worker's answer to a `transcript_info` request: fill the
-/// fixture pane, the claim line, and the path dropdown.
-const onTranscriptInfo = (msg: { info?: TranscriptInfo; error?: string }) => {
-  if (!msg.info) {
-    transcriptClaim.textContent = `fixture failed to parse: ${msg.error ?? "unknown"}`;
-    return;
-  }
-  transcriptInfo = msg.info;
-  const info = msg.info;
-  transcriptInput.value = `${info.sent}\n${info.recv}`;
-  transcriptClaim.textContent =
-    `${info.method} ${info.target} → ${info.host} · response status ${info.status}` +
-    (info.reqBody ? " · request body hidden" : "");
-  // One grouped dropdown of claimable fields: the response body's JSON
-  // paths plus each side's header lines.
-  transcriptPath.replaceChildren();
-  const addGroup = (label: string, items: { value: string; text: string }[]) => {
-    if (!items.length) return;
-    const group = document.createElement("optgroup");
-    group.label = label;
-    for (const it of items) {
-      const opt = document.createElement("option");
-      opt.value = it.value;
-      opt.textContent = it.text;
-      group.append(opt);
-    }
-    transcriptPath.append(group);
-  };
-  addGroup(
-    "response body (JSON)",
-    info.paths.map((p) => ({
-      value: `json:${p.path}`,
-      text: `${p.path} = ${JSON.stringify(preview(p.value))}`,
-    })),
-  );
-  addGroup(
-    "request headers",
-    info.reqHeaders.map((h, i) => ({
-      value: `req:${i}`,
-      text: `${h.name}: ${preview(h.value)}`,
-    })),
-  );
-  addGroup(
-    "response headers",
-    info.respHeaders.map((h, i) => ({
-      value: `resp:${i}`,
-      text: `${h.name}: ${preview(h.value)}`,
-    })),
-  );
-  if (info.paths.some((p) => p.path === "id")) {
-    transcriptPath.value = "json:id";
-  } else if (transcriptPath.options.length) {
-    transcriptPath.value = transcriptPath.options[0].value;
-  }
-  prefillTranscriptExpect();
-  requestTranscriptWords();
-  if (current === "transcript") blindCell.textContent = PROGRAMS.transcript.blind();
-};
-
-const onTranscriptPublic = (msg: {
-  claim: string;
-  expect: string | null;
-  words?: Uint32Array;
-  error?: string;
-}) => {
-  // Stale answer for a claim the user has since changed.
-  if (msg.claim !== transcriptPath.value || msg.expect !== transcriptExpectValue()) return;
-  if (!msg.words) {
-    log(proverLog, `public inputs failed: ${msg.error ?? "unknown"}`, "err");
-    return;
-  }
-  transcriptWords = msg.words;
-  transcriptWordsKey = transcriptKey();
-};
-
-transcriptPath.addEventListener("change", () => {
-  prefillTranscriptExpect();
-  requestTranscriptWords();
-});
-transcriptMode.addEventListener("change", () => {
-  transcriptExpect.hidden = transcriptMode.value !== "assert";
-  requestTranscriptWords();
-});
-transcriptExpect.addEventListener("input", requestTranscriptWords);
-
-// --- full-source modal ---
-
-for (const btn of fullSourceBtns) {
-  btn.addEventListener("click", () => {
-    const f = PROGRAMS[current].fullSource;
-    if (!f) return;
-    sourceModalTitle.textContent = f.title;
-    sourceModalCode.textContent = f.code;
-    sourceModal.hidden = false;
-  });
-}
-const closeSourceModal = () => {
-  sourceModal.hidden = true;
-};
-sourceModalClose.addEventListener("click", closeSourceModal);
-sourceModal.addEventListener("click", (ev) => {
-  if (ev.target === sourceModal) closeSourceModal();
-});
-document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape") closeSourceModal();
-});
-
-// --- feature flags ---
+// --- feature flag: the tamper button (default off) ---
 
 cheatBtn.hidden = !FEATURES.cheat;
-
-delaySlider.addEventListener("input", () => {
-  delayValue.textContent = `${delaySlider.value} ms`;
-});
-
 let cheatArmed = false;
 cheatBtn.addEventListener("click", () => {
   cheatArmed = !cheatArmed;
   cheatBtn.classList.toggle("armed", cheatArmed);
-  cheatBtn.textContent = cheatArmed
-    ? "⚡ will tamper on the next run"
-    : "⚡ tamper with a message";
+  cheatBtn.textContent = cheatArmed ? "⚡ will tamper on the next run" : "⚡ tamper with a message";
 });
+
+// --- the run button ---
+
+const SPINNER = '<span class="spinner" aria-hidden="true"></span>';
+
+/// All run feedback lives on the button itself: a spinner while loading or
+/// proving, a green ✓ on success, a red ✗ (with the message on hover) on
+/// failure. `detail` is the hover title for the error state.
+const setRunButton = (
+  state: "loading" | "idle" | "running" | "done" | "error",
+  detail = "",
+) => {
+  runBtn.disabled = state === "loading";
+  runBtn.classList.toggle("done", state === "done");
+  runBtn.classList.toggle("error", state === "error");
+  if (state === "loading" || state === "running") {
+    runBtn.innerHTML = SPINNER;
+    runBtn.title = state === "running" ? "click to abort" : "loading…";
+  } else {
+    runBtn.textContent = state === "done" ? "✓" : state === "error" ? "✗" : "Prove";
+    runBtn.title = state === "error" ? detail : "";
+  }
+};
 
 // --- readiness ---
 
 let readyCount = 0;
-runBtn.disabled = true;
-channelStatus.textContent = "loading wasm…";
+setRunButton("loading");
 
 const markReady = () => {
   readyCount += 1;
-  if (readyCount === 2) {
-    runBtn.disabled = false;
-    channelStatus.textContent = "idle";
-    // Freshly spawned workers (initial load or post-abort) haven't been
-    // asked about the current module yet.
-    requestGuestInfo(PROGRAMS[current]);
-  }
+  if (readyCount === 2) setRunButton("idle");
 };
 
 // --- one protocol run ---
 
-/// Which relayed message a cheat corrupts: late enough to be past OT setup,
-/// early enough that every program reaches it.
+/// Which relayed message a cheat corrupts: late enough to be meaningful,
+/// early enough that every run reaches it.
 const TAMPER_AT = 10;
 
-/// Message direction; the arrows match the panes' layout (prover left,
-/// verifier right).
 type Dir = "prover→verifier" | "verifier→prover";
 
 interface QueuedMsg {
@@ -1190,9 +478,14 @@ interface QueuedMsg {
   dir: Dir;
 }
 
+interface Traffic {
+  bytes: number;
+}
+
 interface RunState {
-  msgs: number;
-  bytes: Record<Dir, number>;
+  pv: Traffic; // prover → verifier
+  vp: Traffic; // verifier → prover
+  count: number; // total relayed messages — internal, only to place a tamper
   start: number;
   results: Partial<Record<Role, string>>;
   ticker: number;
@@ -1202,19 +495,18 @@ interface RunState {
 }
 let run: RunState | null = null;
 
-const fmtTraffic = (s: RunState) =>
-  `${s.msgs} msgs · →${fmtBytes(s.bytes["prover→verifier"])} · ←${fmtBytes(s.bytes["verifier→prover"])}`;
+const showTraffic = (s: RunState) => {
+  statPv.textContent = fmtBytes(s.pv.bytes);
+  statVp.textContent = fmtBytes(s.vp.bytes);
+};
 
-/// Forwards one queued message, tampering if this run is the cheating one.
 const forward = (state: RunState, item: QueuedMsg) => {
-  state.msgs += 1;
-  state.bytes[item.dir] += item.data.byteLength;
-  if (state.tamper && state.msgs === TAMPER_AT) {
+  const t = item.dir === "prover→verifier" ? state.pv : state.vp;
+  t.bytes += item.data.byteLength;
+  state.count += 1;
+  if (state.tamper && state.count === TAMPER_AT) {
     const view = new Uint8Array(item.data);
     view[Math.min(8, view.length - 1)] ^= 0x01;
-    const note = `⚡ the relay tampered with message #${state.msgs} (${item.dir}) — one bit flipped`;
-    log(proverLog, note, "warn");
-    log(verifierLog, note, "warn");
   }
   item.to.postMessage(item.data, [item.data]);
 };
@@ -1230,25 +522,15 @@ const pump = (state: RunState) => {
       return;
     }
     forward(state, item);
-    const delay = Number(delaySlider.value);
-    if (delay > 0) setTimeout(step, delay);
-    else queueMicrotask(step);
+    queueMicrotask(step);
   };
   step();
-};
-
-/// The run button doubles as the abort button while a run is active.
-const setRunButton = (running: boolean) => {
-  runBtn.textContent = running ? "Abort" : "Run in zero-knowledge";
-  runBtn.classList.toggle("abort", running);
 };
 
 const endRun = () => {
   if (!run) return;
   clearInterval(run.ticker);
-  channel.classList.remove("active");
   run = null;
-  setRunButton(false);
   if (cheatArmed) cheatBtn.click(); // disarm after one use
 };
 
@@ -1262,41 +544,30 @@ const abortRun = () => {
     spawnWorker(role);
   }
   readyCount = 0;
-  runBtn.disabled = true;
-  channelStatus.textContent = "aborted — reloading wasm…";
-  log(proverLog, "run aborted", "warn");
-  log(verifierLog, "run aborted", "warn");
+  setRunButton("loading"); // a fresh pair of workers is loading
 };
 
 const finishRun = () => {
   if (!run) return;
-  const p = PROGRAMS[current];
   const { prover, verifier } = run.results;
   const elapsed = performance.now() - run.start;
-  const traffic = fmtTraffic(run);
-  if (prover !== undefined && verifier !== undefined && prover === verifier) {
-    const delayed = Number(delaySlider.value) > 0 ? " (with simulated latency)" : "";
-    channelStatus.textContent = `proof complete in ${elapsed.toFixed(0)} ms${delayed}\n${traffic}`;
-    const r = p.render(prover);
-    resultEl.textContent = r.text;
-    resultEl.className = `result ${r.cls}`;
-    resultBox.hidden = false;
-    log(proverLog, `revealed — ${r.log}`, "ok");
-    log(verifierLog, `proof checked ✓ — ${r.log}`, "ok");
-    log(verifierLog, `${p.secretName} was never disclosed`, "muted");
-  } else {
-    channelStatus.textContent = "failed";
-    log(verifierLog, `parties disagree: ${prover} vs ${verifier}`, "err");
-  }
+  showTraffic(run);
+  const ok = prover !== undefined && verifier !== undefined && prover === verifier;
   endRun();
+  if (ok) {
+    statTime.textContent = fmtMs(elapsed);
+    resultEl.textContent = prover ?? "";
+    resultBox.hidden = false;
+    setRunButton("done");
+  } else {
+    setRunButton("error", "the parties disagree — the proof did not match");
+  }
 };
 
-const failRun = (role: Role, message: string) => {
+const failRun = (message: string) => {
   if (!run) return;
-  channelStatus.textContent = "proof rejected ✗";
-  log(role === "prover" ? proverLog : verifierLog, message, "err");
-  log(verifierLog, "the proof did not verify — rejected", "err");
   endRun();
+  setRunButton("error", `proof rejected — ${message}`);
 };
 
 const spawnWorker = (role: Role) => {
@@ -1312,45 +583,22 @@ const spawnWorker = (role: Role) => {
       case "done":
         if (!run) return;
         run.results[role] = msg.result;
-        log(
-          role === "prover" ? proverLog : verifierLog,
-          `${role} finished in ${msg.ms.toFixed(0)} ms`,
-        );
         if (run.results.prover !== undefined && run.results.verifier !== undefined) {
           finishRun();
         }
         break;
       case "error":
         if (!run) {
-          // Errors outside a run — e.g. the wasm pkg failed to load (a
-          // stale cached copy after a deploy) — would otherwise vanish.
-          channelStatus.textContent = "error — see the log";
-          log(role === "prover" ? proverLog : verifierLog, msg.message, "err");
+          setRunButton("error", msg.message);
           break;
         }
-        failRun(role, msg.message);
+        failRun(msg.message);
         break;
-      case "guest_info":
-        if (msg.program !== PROGRAMS[current].module) return; // stale
-        (role === "prover" ? proverWasmInfo : verifierWasmInfo).textContent =
-          `wasm ${fmtBytes(msg.size)} · sha-256 ${msg.sha256.slice(0, 8)}…`;
-        (role === "prover" ? proverWasmInfo : verifierWasmInfo).title =
-          `sha-256 ${msg.sha256}`;
+      case "exports": // only the prover worker is asked to inspect
+        onExports(msg.exports);
         break;
-      case "exports":
-        onExports(msg);
-        break;
-      case "transcript_info":
-        onTranscriptInfo(msg);
-        break;
-      case "transcript_public":
-        onTranscriptPublic(msg);
-        break;
-      case "json_info":
-        onJsonInfo(msg);
-        break;
-      case "json_public":
-        onJsonPublic(msg);
+      case "exports-error":
+        onExportsError(msg.message);
         break;
     }
   };
@@ -1359,40 +607,69 @@ const spawnWorker = (role: Role) => {
 
 for (const role of ["prover", "verifier"] as const) spawnWorker(role);
 
+initTooltips();
+
+// Load and inspect each example's built-in module (keeps its example script).
+for (const ex of EXAMPLES) {
+  fetchWasm(ex.wasmUrl)
+    .then((wasm) => {
+      const m: GuestModule = { name: ex.moduleName, wasm, builtin: true, exports: null };
+      exampleModules.set(ex.id, m);
+      inspectModule(m);
+    })
+    .catch((e) => setRunButton("error", e instanceof Error ? e.message : String(e)));
+}
+
 runBtn.addEventListener("click", () => {
   if (run) {
     abortRun();
     return;
   }
-  const p = PROGRAMS[current];
-  const reqs = p.requests();
-  if (typeof reqs === "string") {
-    log(proverLog, reqs, "err");
+  const m = currentModule();
+  if (!m) {
+    setRunButton("error", customMode === "asc" ? "fix the AssemblyScript first" : "drop a .wasm module first");
     return;
   }
-  setRunButton(true);
-  resultBox.hidden = true;
-  clearLogs();
-  blindCell.textContent = p.blind();
-  channel.classList.add("active");
+  // Examples derive their inputs from their form; the custom tab's script
+  // supplies its own (an empty private message is staged for compatibility).
+  const ex = EXAMPLES.find((e) => e.id === currentTab);
+  const { priv, pub } = ex
+    ? ex.toInputs(exampleForms.get(ex.id)!.values())
+    : { priv: { message: new Uint8Array(0) }, pub: { len: 0 } };
 
-  // A fresh channel pair per run; the page relays prover <-> verifier
-  // through a queue, counting (and optionally delaying or tampering with)
-  // the traffic as it passes through.
+  const privBytes = Object.values(priv).reduce((n, a) => n + a.length, 0);
+  if (privBytes > 128 * 1024) {
+    setRunButton("error", "private input too long (max 128 KB)");
+    return;
+  }
+  // The verifier sees private inputs blinded to their length (all zeros).
+  const blinded = Object.fromEntries(
+    Object.entries(priv).map(([k, v]) => [k, new Uint8Array(v.length)]),
+  );
+
+  const script = editor.state.doc.toString();
+
+  setRunButton("running");
+  resultBox.hidden = true;
+  statTime.textContent = "—";
+  statPv.textContent = "0 B";
+  statVp.textContent = "0 B";
+
+  // A fresh channel pair per run; the page relays the two workers' messages
+  // through a queue, counting the traffic in each direction as it passes.
   const toProver = new MessageChannel();
   const toVerifier = new MessageChannel();
   const state: RunState = {
-    msgs: 0,
-    bytes: { "prover→verifier": 0, "verifier→prover": 0 },
+    pv: { bytes: 0 },
+    vp: { bytes: 0 },
+    count: 0,
     start: performance.now(),
     results: {},
     queue: [],
     pumping: false,
     tamper: cheatArmed,
     ticker: window.setInterval(() => {
-      if (run === state) {
-        channelStatus.textContent = `exchanging…\n${fmtTraffic(state)}`;
-      }
+      if (run === state) showTraffic(state);
     }, 100),
   };
   run = state;
@@ -1403,21 +680,17 @@ runBtn.addEventListener("click", () => {
       pump(state);
     };
   };
+  // The prover holds toProver.port2, the verifier toVerifier.port2 — so a
+  // message arriving on toProver.port1 came FROM the prover, and so on.
   relay(toProver.port1, toVerifier.port1, "prover→verifier");
   relay(toVerifier.port1, toProver.port1, "verifier→prover");
 
-  channelStatus.textContent = "exchanging…";
-  log(proverLog, p.proverStage());
-  log(verifierLog, "blind slot allocated — bytes unknown");
-  log(proverLog, "OT preprocessing (CO15 → KOS → Ferret)…");
-  log(verifierLog, "OT preprocessing (CO15 → KOS → Ferret)…");
-  log(proverLog, "executing on Speakup");
-  log(verifierLog, "verifying every instruction…");
-  if (state.tamper) {
-    log(verifierLog, "⚡ cheat armed: the relay will corrupt one message", "warn");
-  }
-  workers.prover.postMessage(reqs.prover, [toProver.port2]);
-  workers.verifier.postMessage(reqs.verifier, [toVerifier.port2]);
+  const proverReq: PartyRequest = {
+    type: "run", role: "prover", script, wasm: m.wasm, pub, priv, args: [],
+  };
+  const verifierReq: PartyRequest = {
+    type: "run", role: "verifier", script, wasm: m.wasm, pub, priv: blinded, args: [],
+  };
+  workers.prover.postMessage(proverReq, [toProver.port2]);
+  workers.verifier.postMessage(verifierReq, [toVerifier.port2]);
 });
-
-selectProgram("square");

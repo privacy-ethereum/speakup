@@ -3,24 +3,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "square",
-    "age",
     "sha256",
-    "regex",
-    "regex-core",
-    "luhn",
-    "csv",
-    "json",
-    "transcript",
-    "transcript-core",
+    "sudoku",
 ]
 
 [workspace.dependencies]
 mpz-vm-sys = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
-# 0xtsukino's transcript-verify PR branch (tlsnotary/tlsn-utils#XX): the
-# advice-pattern span tables the transcript guest verifies. Pinned to a rev —
-# PR branches move.
-transcript-verify = { git = "https://github.com/0xtsukino/tlsn-utils", rev = "e12b14865fca8d7f0487f4d606842f05ff5bdf44", default-features = false }
 
 # Small, branch-free wasm for the zk-vm.
 [profile.release]

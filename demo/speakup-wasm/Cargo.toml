@@ -1,6 +1,8 @@
-# The wasm-bindgen wrapper around the mpz zk-vm for the browser demo.
+# wasm-bindgen bindings for the mpz zk-vm: a generic, guest-agnostic API
+# (load a module, stage public/private/blind memory, call exports, read
+# revealed bytes) that JavaScript drives one step at a time.
 [package]
-name = "zkvm-demo"
+name = "speakup-wasm"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -28,11 +30,6 @@ mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", branch = "v2" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
-# 0xtsukino's transcript-verify PR branch (feat/transcript-verify): the
-# host-side parser producing the span-table advice the transcript guest
-# verifies. Pinned to a rev — PR branches move.
-transcript-verify = { git = "https://github.com/0xtsukino/tlsn-utils", rev = "e12b14865fca8d7f0487f4d606842f05ff5bdf44" }
-regex-automata = "0.4"
 rayon = "1"
 
 futures = "0.3"
@@ -47,12 +44,12 @@ web-sys = { version = "0.3", features = ["MessagePort", "MessageEvent", "Message
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-regex-dfa-core = { version = "0.0.0", path = "../guests/regex-core" }
-transcript-core = { version = "0.0.0", path = "../guests/transcript-core" }
 
 [dev-dependencies]
 futures = "0.3"
 wasm-bindgen-test = "0.3"
+# A tiny inline module for the generic-API tests (no guest crate needed).
+wat = "1"
 
 [profile.release]
 opt-level = 3
