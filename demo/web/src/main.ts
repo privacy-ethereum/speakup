@@ -1,5 +1,7 @@
+import QRCode from "qrcode";
 import { FEATURES } from "./config";
 import type {
+  EcdsaInfo,
   EmbeddedProgram,
   ExportInfo,
   PartyRequest,
@@ -7,6 +9,13 @@ import type {
   Role,
   TranscriptInfo,
 } from "./party.worker";
+import {
+  hostInvite,
+  joinInvite,
+  type ControlMsg,
+  type RemoteDisplay,
+  type RemoteLink,
+} from "./remote";
 import "./style.css";
 
 // The real guest sources, embedded verbatim for the "view full source"
@@ -22,6 +31,8 @@ import jsonSrc from "../../guests/json/src/lib.rs?raw";
 import jsonCoreSrc from "../../guests/transcript-core/src/json.rs?raw";
 import transcriptSrc from "../../guests/transcript/src/lib.rs?raw";
 import transcriptCoreSrc from "../../guests/transcript-core/src/lib.rs?raw";
+import ecdsaSrc from "../../guests/ecdsa/src/lib.rs?raw";
+import ecdsaCoreSrc from "../../guests/ecdsa-core/src/lib.rs?raw";
 
 // One worker per party: two isolated wasm memories. The prover's secrets
 // physically cannot be in the verifier's address space. Spawned (and on
@@ -60,6 +71,11 @@ const transcriptClaim = $("transcript-claim");
 const transcriptPath = $<HTMLSelectElement>("transcript-path");
 const transcriptMode = $<HTMLSelectElement>("transcript-mode");
 const transcriptExpect = $<HTMLInputElement>("transcript-expect");
+const ecdsaInput = $<HTMLInputElement>("ecdsa-input");
+const ecdsaCorruptRow = $("ecdsa-corrupt-row");
+const ecdsaCorrupt = $<HTMLInputElement>("ecdsa-corrupt");
+const ecdsaRow = $("ecdsa-row");
+const ecdsaClaim = $("ecdsa-claim");
 const colInput = $<HTMLInputElement>("col-input");
 const thresholdInput = $<HTMLInputElement>("threshold-input");
 const inputLabel = $("input-label");
@@ -75,6 +91,16 @@ const resultEl = $("result");
 const delaySlider = $<HTMLInputElement>("delay-slider");
 const delayValue = $("delay-value");
 const cheatBtn = $<HTMLButtonElement>("cheat");
+const remoteBox = $("remote-box");
+const inviteBtn = $<HTMLButtonElement>("invite");
+const invitePanel = $("invite-panel");
+const inviteQr = $<HTMLCanvasElement>("invite-qr");
+const inviteLink = $<HTMLAnchorElement>("invite-link");
+const inviteStatus = $("invite-status");
+const inviteCancelBtn = $<HTMLButtonElement>("invite-cancel");
+const remoteConnected = $("remote-connected");
+const remoteStatusEl = $("remote-status");
+const remoteDisconnectBtn = $<HTMLButtonElement>("remote-disconnect");
 const shaPresets = $("sha-presets");
 const proverWasmInfo = $("prover-wasm-info");
 const verifierWasmInfo = $("verifier-wasm-info");
@@ -156,6 +182,10 @@ let transcriptInfo: TranscriptInfo | null = null;
 /// pair it was computed for (guards against running with a stale table).
 let transcriptWords: Uint32Array | null = null;
 let transcriptWordsKey = "";
+
+// --- ecdsa public facts (filled by the prover worker's answer) ---
+
+let ecdsaInfo: EcdsaInfo | null = null;
 
 /// `null` = disclose mode; a string = assert the field equals it.
 const transcriptExpectValue = (): string | null =>
@@ -473,8 +503,12 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       } catch {
         return { text: result, cls: "", log: `result: ${result}` };
       }
-      const path = jsonPath.value || "(document root)";
-      const expect = jsonExpectValue();
+      // In a remote-verifier run the claim was configured on the prover's
+      // device; render from the labels it sent (public claim data).
+      const path = remoteDisplay
+        ? remoteDisplay.path || "(document root)"
+        : jsonPath.value || "(document root)";
+      const expect = remoteDisplay ? remoteDisplay.expect : jsonExpectValue();
       if (parsed.ok === 1) {
         return expect === null
           ? {
@@ -561,9 +595,11 @@ const PROGRAMS: Record<ProgramKey, Program> = {
       } catch {
         return { text: result, cls: "", log: `result: ${result}` };
       }
-      const label =
-        transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value;
-      const expect = transcriptExpectValue();
+      // Remote-verifier runs render from the prover device's labels.
+      const label = remoteDisplay
+        ? (remoteDisplay.label ?? "(claim)")
+        : (transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value);
+      const expect = remoteDisplay ? remoteDisplay.expect : transcriptExpectValue();
       if (parsed.ok === 1) {
         return expect === null
           ? {
@@ -588,30 +624,67 @@ const PROGRAMS: Record<ProgramKey, Program> = {
     },
     secretName: "the transcript (every header and field other than the claims)",
   },
-  // Placeholder: no guest exists yet. The tab shows what's planned and the
-  // Run button explains itself; everything else (guest crate, bindings,
-  // worker plumbing) lands with the implementation.
   ecdsa: {
-    source: `// coming soon
-//
-// fn verify(msg, sig, pubkey) -> i32 {
-//     // verify an ECDSA signature
-//     // INSIDE the zk-vm: prove a
-//     // private message carries a
-//     // valid signature, revealing
-//     // neither message nor signature
-//     reveal(ecdsa_verify(...))
-// }`,
-    inputLabel: "private message & signature",
+    source: `fn verify_sig(len: i32) -> i32 {
+    // real ECDSA — sha-256, u1·G + u2·Q,
+    // x =? r — over a PRIVATE message and
+    // a PRIVATE signature, branch-free:
+    // inverses ride along as advice the
+    // checks force to be honest
+    reveal(ecdsa_verify(msg, r, s, Q))
+}`,
+    fullSource: {
+      title: "guests/ecdsa/src/lib.rs (+ ecdsa-core)",
+      code: `${ecdsaSrc}\n// ───── guests/ecdsa-core/src/lib.rs ─────\n\n${ecdsaCoreSrc}`,
+    },
+    module: "ecdsa",
+    input: ecdsaInput,
+    inputLabel: "private message — signed here with the demo key, then proven",
+    centerRow: ecdsaRow,
     requests() {
-      return "ecdsa is not implemented yet — coming soon";
+      const bytes = new TextEncoder().encode(ecdsaInput.value);
+      const cap = ecdsaInfo?.msgCap ?? 512;
+      if (bytes.length === 0) return "message must not be empty";
+      if (bytes.length > cap) return `message too long (max ${cap} bytes)`;
+      return {
+        prover: {
+          type: "run",
+          role: "prover",
+          program: "ecdsa",
+          message: bytes,
+          msgLen: bytes.length,
+          corrupt: ecdsaCorrupt.checked,
+        },
+        verifier: {
+          type: "run",
+          role: "verifier",
+          program: "ecdsa",
+          message: new Uint8Array(),
+          msgLen: bytes.length,
+          corrupt: false,
+        },
+      };
     },
-    blind: () => "—",
-    proverStage: () => "",
+    blind: () =>
+      `${hatch(utf8len(ecdsaInput.value))} + ░░░░░░░░ signature (r, s)`,
+    proverStage() {
+      const n = utf8len(ecdsaInput.value);
+      return (
+        `signing with the demo key, staging private message (${n} bytes) + signature` +
+        (ecdsaCorrupt.checked ? " — ⚡ one signature bit flipped" : "")
+      );
+    },
     render(result) {
-      return { text: result, cls: "", log: `result: ${result}` };
+      const ok = result === "1";
+      return {
+        text: ok ? "✓ valid signature under the public key" : "✗ not proven",
+        cls: ok ? "ok" : "no",
+        log: ok
+          ? "proved: the hidden message carries a valid signature — neither it nor (r, s) was disclosed"
+          : "not proven: the signature does not verify",
+      };
     },
-    secretName: "the message and signature",
+    secretName: "the message and the signature",
   },
   custom: {
     source: `// drop a compiled guest module
@@ -718,6 +791,7 @@ const selectProgram = (key: ProgramKey) => {
   // No prover-pane input for custom: its arguments live in the center panel.
   (inputLabel.parentElement as HTMLElement).hidden = !p.input;
   shaPresets.hidden = key !== "sha256";
+  ecdsaCorruptRow.hidden = key !== "ecdsa";
   if (p.centerRow) p.centerRow.hidden = false;
   inputLabel.textContent = p.inputLabel;
   proverSource.textContent = p.source;
@@ -729,6 +803,10 @@ const selectProgram = (key: ProgramKey) => {
   // The (editable) document is parsed lazily on first entry; edits
   // re-parse via the input listener.
   if (key === "json" && !jsonPaths) requestJsonInfo();
+  // The curve and demo-key facts are embedded constants, fetched once.
+  if (key === "ecdsa" && !ecdsaInfo) {
+    workers.prover.postMessage({ type: "ecdsa_info" } satisfies PartyRequest);
+  }
   for (const btn of fullSourceBtns) btn.hidden = !p.fullSource;
   requestGuestInfo(p);
   if (key === "custom" && customInfoLine) {
@@ -1118,6 +1196,20 @@ transcriptMode.addEventListener("change", () => {
 });
 transcriptExpect.addEventListener("input", requestTranscriptWords);
 
+// --- ecdsa plumbing ---
+
+/// The prover worker's answer to an `ecdsa_info` request: fill the public
+/// "known to both" row with the curve and demo key.
+const onEcdsaInfo = (msg: { info?: EcdsaInfo; error?: string }) => {
+  if (!msg.info) {
+    ecdsaClaim.textContent = `✗ ${msg.error ?? "curve info unavailable"}`;
+    return;
+  }
+  ecdsaInfo = msg.info;
+  ecdsaClaim.textContent =
+    `toy curve ${msg.info.curve} · Q = (0x${msg.info.qx}, 0x${msg.info.qy})`;
+};
+
 // --- full-source modal ---
 
 for (const btn of fullSourceBtns) {
@@ -1142,8 +1234,6 @@ document.addEventListener("keydown", (ev) => {
 
 // --- feature flags ---
 
-cheatBtn.hidden = !FEATURES.cheat;
-
 delaySlider.addEventListener("input", () => {
   delayValue.textContent = `${delaySlider.value} ms`;
 });
@@ -1154,7 +1244,7 @@ cheatBtn.addEventListener("click", () => {
   cheatBtn.classList.toggle("armed", cheatArmed);
   cheatBtn.textContent = cheatArmed
     ? "⚡ will tamper on the next run"
-    : "⚡ tamper with a message";
+    : "⚡ tamper with the traffic";
 });
 
 // --- readiness ---
@@ -1166,27 +1256,49 @@ channelStatus.textContent = "loading wasm…";
 const markReady = () => {
   readyCount += 1;
   if (readyCount === 2) {
-    runBtn.disabled = false;
+    setRunButton(false);
     channelStatus.textContent = "idle";
     // Freshly spawned workers (initial load or post-abort) haven't been
     // asked about the current module yet.
     requestGuestInfo(PROGRAMS[current]);
+    // A remote run request that arrived while the wasm was still loading.
+    if (pendingStart) {
+      const msg = pendingStart;
+      pendingStart = null;
+      onRemoteStart(msg);
+    }
   }
 };
 
 // --- one protocol run ---
 
-/// Which relayed message a cheat corrupts: late enough to be past OT setup,
-/// early enough that every program reaches it.
-const TAMPER_AT = 10;
+/// A cheat flips a bit in the prover→verifier messages so the verifier's
+/// consistency check rejects the proof. It corrupts *every* payload-carrying
+/// message, not a single one: the relay numbers messages as they arrive
+/// interleaved across both directions, so a fixed index lands on different
+/// protocol data from run to run, and a lone corrupted OT correlation can
+/// fall outside the consistency-check sample — the proof then verifies
+/// anyway, the one outcome a tamper demo must never show. Corrupting the
+/// whole prover→verifier stream is caught deterministically: either the COT
+/// bootstrap check (preprocessing) or the final batch check (the proof).
+/// Messages below this size are pure mux framing / handshakes — a flipped
+/// frame header trips the transport ("frame size too big"), not the crypto,
+/// so we skip them and keep the story about the proof.
+const TAMPER_MIN_BYTES = 256;
 
 /// Message direction; the arrows match the panes' layout (prover left,
 /// verifier right).
 type Dir = "prover→verifier" | "verifier→prover";
 
+/// Where a relayed message lands: the other party's MessagePort in local
+/// mode, the WebRTC link in remote mode. MessagePort satisfies this shape.
+interface Sink {
+  postMessage(data: ArrayBuffer, transfer: Transferable[]): void;
+}
+
 interface QueuedMsg {
   data: ArrayBuffer;
-  to: MessagePort;
+  to: Sink;
   dir: Dir;
 }
 
@@ -1196,51 +1308,76 @@ interface RunState {
   start: number;
   results: Partial<Record<Role, string>>;
   ticker: number;
-  queue: QueuedMsg[];
-  pumping: boolean;
+  /// Latest scheduled delivery time per direction: keeps each direction
+  /// FIFO even if the latency slider moves mid-run.
+  lastAt: Record<Dir, number>;
   tamper: boolean;
+  /// How many messages this run has corrupted (for the one-time log note).
+  tamperHits: number;
+  /// Remote mode: where incoming protocol bytes are delivered (the local
+  /// party's page-side port end) and their direction label.
+  remoteIn?: { to: Sink; dir: Dir };
 }
 let run: RunState | null = null;
 
 const fmtTraffic = (s: RunState) =>
   `${s.msgs} msgs · →${fmtBytes(s.bytes["prover→verifier"])} · ←${fmtBytes(s.bytes["verifier→prover"])}`;
 
-/// Forwards one queued message, tampering if this run is the cheating one.
+/// Forwards one relayed message, tampering if this run is the cheating one.
 const forward = (state: RunState, item: QueuedMsg) => {
   state.msgs += 1;
   state.bytes[item.dir] += item.data.byteLength;
-  if (state.tamper && state.msgs === TAMPER_AT) {
+  if (
+    state.tamper &&
+    item.dir === "prover→verifier" &&
+    item.data.byteLength >= TAMPER_MIN_BYTES
+  ) {
+    if (state.tamperHits === 0) {
+      const note =
+        "⚡ the relay is flipping a bit in the prover's messages — the verifier will reject";
+      log(proverLog, note, "warn");
+      log(verifierLog, note, "warn");
+    }
+    state.tamperHits += 1;
     const view = new Uint8Array(item.data);
-    view[Math.min(8, view.length - 1)] ^= 0x01;
-    const note = `⚡ the relay tampered with message #${state.msgs} (${item.dir}) — one bit flipped`;
-    log(proverLog, note, "warn");
-    log(verifierLog, note, "warn");
+    // The middle of a batch is payload, not a 12-byte frame header.
+    view[view.length >> 1] ^= 0x01;
   }
   item.to.postMessage(item.data, [item.data]);
 };
 
-const pump = (state: RunState) => {
-  if (state.pumping) return;
-  state.pumping = true;
-  const step = () => {
-    if (run !== state) return; // run ended
-    const item = state.queue.shift();
-    if (!item) {
-      state.pumping = false;
-      return;
-    }
+/// Delivers a message after the simulated latency. Each direction is an
+/// independent link: messages overlap in flight (delivery is scheduled at
+/// arrival + latency), so the run slows by the latency times the protocol's
+/// round-trip depth — not times the message count.
+const deliver = (state: RunState, item: QueuedMsg) => {
+  const now = performance.now();
+  const at = Math.max(now + Number(delaySlider.value), state.lastAt[item.dir]);
+  state.lastAt[item.dir] = at;
+  if (at <= now) {
     forward(state, item);
-    const delay = Number(delaySlider.value);
-    if (delay > 0) setTimeout(step, delay);
-    else queueMicrotask(step);
-  };
-  step();
+    return;
+  }
+  setTimeout(() => {
+    if (run === state) forward(state, item);
+  }, at - now);
 };
 
-/// The run button doubles as the abort button while a run is active.
+/// The run button doubles as the abort button while a run is active. On a
+/// remote-verifier device runs are started by the prover's device, so the
+/// button only ever aborts.
 const setRunButton = (running: boolean) => {
-  runBtn.textContent = running ? "Abort" : "Run in zero-knowledge";
   runBtn.classList.toggle("abort", running);
+  if (running) {
+    runBtn.textContent = "Abort";
+    runBtn.disabled = false;
+  } else if (remote.kind === "guest") {
+    runBtn.textContent = "waiting for the prover's device…";
+    runBtn.disabled = true;
+  } else {
+    runBtn.textContent = "Run in zero-knowledge";
+    runBtn.disabled = readyCount < 2;
+  }
 };
 
 const endRun = () => {
@@ -1254,8 +1391,11 @@ const endRun = () => {
 
 /// The protocol can't be interrupted mid-computation: kill both workers and
 /// spawn fresh ones (they hold no state between runs).
-const abortRun = () => {
+const abortRun = (notifyPeer: boolean) => {
   if (!run) return;
+  if (notifyPeer && remote.kind !== "local") {
+    remote.link.sendControl({ kind: "abort" });
+  }
   endRun();
   for (const role of ["prover", "verifier"] as const) {
     workers[role].terminate();
@@ -1316,6 +1456,9 @@ const spawnWorker = (role: Role) => {
           role === "prover" ? proverLog : verifierLog,
           `${role} finished in ${msg.ms.toFixed(0)} ms`,
         );
+        if (remote.kind !== "local") {
+          remote.link.sendControl({ kind: "done", result: msg.result, ms: msg.ms });
+        }
         if (run.results.prover !== undefined && run.results.verifier !== undefined) {
           finishRun();
         }
@@ -1327,6 +1470,9 @@ const spawnWorker = (role: Role) => {
           channelStatus.textContent = "error — see the log";
           log(role === "prover" ? proverLog : verifierLog, msg.message, "err");
           break;
+        }
+        if (remote.kind !== "local") {
+          remote.link.sendControl({ kind: "error", message: msg.message });
         }
         failRun(role, msg.message);
         break;
@@ -1352,6 +1498,9 @@ const spawnWorker = (role: Role) => {
       case "json_public":
         onJsonPublic(msg);
         break;
+      case "ecdsa_info":
+        onEcdsaInfo(msg);
+        break;
     }
   };
   workers[role] = worker;
@@ -1359,9 +1508,385 @@ const spawnWorker = (role: Role) => {
 
 for (const role of ["prover", "verifier"] as const) spawnWorker(role);
 
+const newRunState = (): RunState => {
+  const state: RunState = {
+    msgs: 0,
+    bytes: { "prover→verifier": 0, "verifier→prover": 0 },
+    start: performance.now(),
+    results: {},
+    lastAt: { "prover→verifier": 0, "verifier→prover": 0 },
+    tamper: cheatArmed,
+    tamperHits: 0,
+    ticker: 0,
+  };
+  state.ticker = window.setInterval(() => {
+    if (run === state) {
+      channelStatus.textContent = `exchanging…\n${fmtTraffic(state)}`;
+    }
+  }, 100);
+  return state;
+};
+
+// --- remote verifier (a second device over WebRTC) ---
+//
+// The relay above is the single point where messages cross between the
+// parties, so remote mode is purely a page-level rewiring: this device
+// spawns its usual workers but runs only its own role, and the relay pumps
+// that worker's port into the WebRTC link instead of into the other local
+// worker. Everything below the page (workers, bindings, the protocol)
+// is unchanged. The inviting device is the prover; the device that scans
+// the QR code becomes the verifier.
+
+type RemoteMode =
+  | { kind: "local" }
+  | { kind: "host"; link: RemoteLink } // this device is the prover
+  | { kind: "guest"; link: RemoteLink }; // this device is the verifier
+let remote: RemoteMode = { kind: "local" };
+
+/// Claim labels of the current remote run, sent by the prover's device —
+/// the guest's own claim UI has nothing to do with the run it verifies.
+let remoteDisplay: RemoteDisplay | null = null;
+
+/// A `start` that arrived before this device's wasm finished loading, and
+/// any protocol bytes that raced ahead of it (the prover starts writing
+/// immediately).
+let pendingStart: Extract<ControlMsg, { kind: "start" }> | null = null;
+const pendingBytes: ArrayBuffer[] = [];
+
+const remoteOther = (): Role => (remote.kind === "guest" ? "prover" : "verifier");
+
+/// Wires one remote run: the local party's port pumps into the link, and
+/// `remoteIn` tells the protocol handler where to deliver incoming bytes.
+/// Both directions go through deliver(), so the traffic counters, the
+/// latency slider, and the tamper button keep working on each device.
+const attachRemoteRun = (
+  state: RunState,
+  role: Role,
+  request: PartyRequest,
+  link: RemoteLink,
+) => {
+  const chan = new MessageChannel();
+  const outDir: Dir = role === "prover" ? "prover→verifier" : "verifier→prover";
+  const inDir: Dir = role === "prover" ? "verifier→prover" : "prover→verifier";
+  const sink: Sink = { postMessage: (data) => link.sendProtocol(data) };
+  chan.port1.onmessage = (ev) => {
+    deliver(state, { data: ev.data as ArrayBuffer, to: sink, dir: outDir });
+  };
+  state.remoteIn = { to: chan.port1, dir: inDir };
+  workers[role].postMessage(request, [chan.port2]);
+};
+
+const onRemoteProtocol = (data: ArrayBuffer) => {
+  if (run?.remoteIn) {
+    deliver(run, { data, to: run.remoteIn.to, dir: run.remoteIn.dir });
+  } else if (pendingStart) {
+    pendingBytes.push(data);
+  }
+  // Otherwise: stray bytes from a run that already ended here — drop.
+};
+
+/// Claim labels for the verifier device's result rendering (public data).
+const buildRemoteDisplay = (): RemoteDisplay | null => {
+  if (current === "json") {
+    return { path: jsonPath.value, expect: jsonExpectValue() };
+  }
+  if (current === "transcript") {
+    return {
+      label: transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value,
+      expect: transcriptExpectValue(),
+    };
+  }
+  return null;
+};
+
+/// Log lines describing the run's public inputs, for the verifier device
+/// (which didn't configure the run and can't see this device's UI).
+const publicSummary = (): string[] => {
+  const claimLine = (label: string, expect: string | null) =>
+    `public claim: ${label} ${expect === null ? "— reveal its value" : `= ${JSON.stringify(expect)}`}`;
+  switch (current) {
+    case "age":
+      return [`public: today = ${todayPacked()}`];
+    case "sha256":
+      return [`public: message length ${utf8len(textInput.value)} bytes`];
+    case "regex":
+      return [`public pattern: ${patternInput.value}`];
+    case "csv":
+      return [`public: column ${colInput.value}, threshold ${thresholdInput.value}`];
+    case "json":
+      return [claimLine(jsonPath.value || "(document root)", jsonExpectValue())];
+    case "ecdsa":
+      return [
+        `public: message length ${utf8len(ecdsaInput.value)} bytes`,
+        ...(ecdsaInfo
+          ? [`public key Q = (0x${ecdsaInfo.qx}, 0x${ecdsaInfo.qy}) on ${ecdsaInfo.curve}`]
+          : []),
+      ];
+    case "transcript":
+      return [
+        claimLine(
+          transcriptClaimInfo(transcriptPath.value)?.label ?? transcriptPath.value,
+          transcriptExpectValue(),
+        ),
+      ];
+    case "custom": {
+      const exp = selectedExport();
+      return exp
+        ? [`public: function ${fmtSig(exp)}`, `arguments: ${PROGRAMS.custom.blind()}`]
+        : [];
+    }
+    default:
+      return [];
+  }
+};
+
+/// Host side of a remote run: ship the verifier request (public data only)
+/// to the other device, then start the local prover against the link.
+const startRemoteRun = (
+  reqs: { prover: PartyRequest; verifier: PartyRequest },
+  link: RemoteLink,
+) => {
+  const p = PROGRAMS[current];
+  link.sendControl({
+    kind: "start",
+    program: current,
+    request: reqs.verifier,
+    blind: p.blind(),
+    summary: publicSummary(),
+    display: buildRemoteDisplay(),
+  });
+  setRunButton(true);
+  resultBox.hidden = true;
+  clearLogs();
+  blindCell.textContent = p.blind();
+  channel.classList.add("active");
+  const state = newRunState();
+  run = state;
+  channelStatus.textContent = "exchanging…";
+  log(proverLog, p.proverStage());
+  log(proverLog, "OT preprocessing (CO15 → KOS → Ferret)…");
+  log(proverLog, "executing on Speakup");
+  log(verifierLog, "verifying on the remote device…", "muted");
+  if (state.tamper) {
+    log(proverLog, "⚡ cheat armed: this relay will corrupt the prover's messages", "warn");
+  }
+  attachRemoteRun(state, "prover", reqs.prover, link);
+};
+
+/// Guest side: a `start` arrived from the prover's device.
+const onRemoteStart = (msg: Extract<ControlMsg, { kind: "start" }>) => {
+  if (remote.kind !== "guest" || run) return;
+  const link = remote.link;
+  if (readyCount < 2) {
+    pendingStart = msg;
+    channelStatus.textContent = "run incoming — still loading wasm…";
+    return;
+  }
+  if (!(msg.program in PROGRAMS)) {
+    link.sendControl({ kind: "error", message: `unknown program "${msg.program}"` });
+    return;
+  }
+  selectProgram(msg.program as ProgramKey);
+  remoteDisplay = msg.display;
+  blindCell.textContent = msg.blind;
+  setRunButton(true);
+  resultBox.hidden = true;
+  channel.classList.add("active");
+  const state = newRunState();
+  run = state;
+  channelStatus.textContent = "exchanging…";
+  log(proverLog, "proving on the remote device…", "muted");
+  log(verifierLog, "the remote prover started a run", "ok");
+  for (const line of msg.summary) log(verifierLog, line);
+  log(verifierLog, "blind slot allocated — bytes unknown");
+  log(verifierLog, "OT preprocessing (CO15 → KOS → Ferret)…");
+  log(verifierLog, "verifying every instruction…");
+  if (state.tamper) {
+    log(verifierLog, "⚡ cheat armed: this relay will corrupt the prover's messages", "warn");
+  }
+  attachRemoteRun(state, "verifier", msg.request, link);
+  // Protocol bytes that arrived while the wasm was still loading.
+  for (const data of pendingBytes.splice(0)) onRemoteProtocol(data);
+};
+
+const onRemoteControl = (msg: ControlMsg) => {
+  switch (msg.kind) {
+    case "hello":
+      // Host → guest. Different deploys embed different guest modules, so
+      // a cross-version run would fail in confusing ways — refuse early.
+      if (msg.version !== __PKG_VERSION__) {
+        log(
+          verifierLog,
+          `deploy mismatch: this page runs ${__PKG_VERSION__}, the prover's runs ${msg.version} — reload both devices`,
+          "err",
+        );
+        disconnectRemote("deploy mismatch — reload both devices");
+      }
+      break;
+    case "start":
+      onRemoteStart(msg);
+      break;
+    case "done": {
+      if (!run) return;
+      const role = remoteOther();
+      run.results[role] = msg.result;
+      log(
+        role === "prover" ? proverLog : verifierLog,
+        `${role} finished in ${msg.ms.toFixed(0)} ms (on the remote device)`,
+      );
+      if (run.results.prover !== undefined && run.results.verifier !== undefined) {
+        finishRun();
+      }
+      break;
+    }
+    case "error": {
+      const pane = remoteOther() === "prover" ? proverLog : verifierLog;
+      if (run) failRun(remoteOther(), `remote device: ${msg.message}`);
+      else log(pane, `remote device: ${msg.message}`, "err");
+      break;
+    }
+    case "abort":
+      if (run) {
+        abortRun(false);
+        channelStatus.textContent = "aborted by the remote device — reloading wasm…";
+      }
+      break;
+  }
+};
+
+const remoteEvents = {
+  onControl: onRemoteControl,
+  onProtocol: onRemoteProtocol,
+  onClose: (reason: string) => {
+    if (remote.kind === "local") return;
+    const wasGuest = remote.kind === "guest";
+    remote = { kind: "local" };
+    pendingStart = null;
+    pendingBytes.length = 0;
+    document.body.classList.remove("remote-guest", "remote-host");
+    remoteConnected.hidden = true;
+    inviteBtn.hidden = false;
+    // The note belongs in the remote party's pane: the prover pane on a
+    // guest (verifier) device, the verifier pane on the host.
+    log(wasGuest ? proverLog : verifierLog, reason, "warn");
+    if (run) {
+      abortRun(false);
+      channelStatus.textContent = `${reason} — run aborted`;
+    } else {
+      setRunButton(false);
+      if (readyCount === 2) channelStatus.textContent = "idle";
+    }
+  },
+};
+
+/// Remote runs cross a real network: zero the simulated latency on connect
+/// (deliver() reads the slider live; the body class hides it while linked).
+const resetLatency = () => {
+  delaySlider.value = "0";
+  delayValue.textContent = "0 ms";
+};
+
+/// Tears down the link on purpose (disconnect button, version mismatch).
+const disconnectRemote = (reason: string) => {
+  if (remote.kind === "local") return;
+  remote.link.close(); // close() suppresses the link's own teardown event
+  remoteEvents.onClose(reason);
+};
+
+const joinUrlFor = (id: string) => {
+  const url = new URL(location.href);
+  url.searchParams.set("join", id);
+  url.hash = "";
+  return url.toString();
+};
+
+let inviteHandle: { cancel(): void } | null = null;
+
+inviteBtn.addEventListener("click", () => {
+  inviteBtn.hidden = true;
+  invitePanel.hidden = false;
+  inviteQr.hidden = true;
+  inviteLink.textContent = "";
+  inviteStatus.textContent = "creating invite…";
+  inviteHandle = hostInvite({
+    joinUrl: joinUrlFor,
+    onWaiting: (url) => {
+      void QRCode.toCanvas(inviteQr, url, { width: 220, margin: 2 });
+      inviteQr.hidden = false;
+      inviteLink.href = url;
+      inviteLink.textContent = url;
+      inviteStatus.textContent =
+        "scan with the verifier's device\n(both devices need this page open)";
+    },
+    onConnected: (link) => {
+      invitePanel.hidden = true;
+      // Same-deploy check; the guest's version rides in the metadata.
+      if (link.peerVersion !== __PKG_VERSION__) {
+        link.sendControl({
+          kind: "error",
+          message: `deploy mismatch: prover runs ${__PKG_VERSION__}, verifier ${link.peerVersion} — reload both devices`,
+        });
+        log(verifierLog, "remote verifier rejected: deploy mismatch — reload both devices", "err");
+        setTimeout(() => link.close(), 500); // let the message flush
+        inviteBtn.hidden = false;
+        return;
+      }
+      link.sendControl({ kind: "hello", version: __PKG_VERSION__ });
+      remote = { kind: "host", link };
+      resetLatency();
+      document.body.classList.add("remote-host");
+      remoteConnected.hidden = false;
+      remoteStatusEl.textContent =
+        "✓ remote verifier connected — runs verify on the other device";
+      log(verifierLog, "remote verifier connected — its log continues there", "ok");
+    },
+    onError: (message) => {
+      inviteStatus.textContent = `invite failed: ${message}`;
+    },
+    events: remoteEvents,
+  });
+});
+
+inviteCancelBtn.addEventListener("click", () => {
+  inviteHandle?.cancel();
+  inviteHandle = null;
+  invitePanel.hidden = true;
+  inviteBtn.hidden = false;
+});
+
+remoteDisconnectBtn.addEventListener("click", () => disconnectRemote("disconnected"));
+
+remoteBox.hidden = !FEATURES.remote;
+const joinParam = new URLSearchParams(location.search).get("join");
+if (FEATURES.remote && joinParam) {
+  inviteBtn.hidden = true;
+  remoteConnected.hidden = false;
+  remoteDisconnectBtn.hidden = true;
+  remoteStatusEl.textContent = "connecting to the prover's device…";
+  joinInvite(joinParam, __PKG_VERSION__, {
+    events: remoteEvents,
+    onConnected: (link) => {
+      remote = { kind: "guest", link };
+      resetLatency();
+      document.body.classList.add("remote-guest");
+      remoteStatusEl.textContent =
+        "✓ connected — this device is the verifier\nruns start from the prover's device";
+      remoteDisconnectBtn.hidden = false;
+      setRunButton(false);
+      log(verifierLog, "connected to the remote prover", "ok");
+    },
+    onError: (message) => {
+      remoteStatusEl.textContent = `couldn't connect: ${message}`;
+      inviteBtn.hidden = false;
+    },
+  });
+}
+
+// --- the run button ---
+
 runBtn.addEventListener("click", () => {
   if (run) {
-    abortRun();
+    abortRun(true);
     return;
   }
   const p = PROGRAMS[current];
@@ -1370,37 +1895,28 @@ runBtn.addEventListener("click", () => {
     log(proverLog, reqs, "err");
     return;
   }
+  remoteDisplay = null;
+  if (remote.kind === "host") {
+    startRemoteRun(reqs, remote.link);
+    return;
+  }
   setRunButton(true);
   resultBox.hidden = true;
   clearLogs();
   blindCell.textContent = p.blind();
   channel.classList.add("active");
 
-  // A fresh channel pair per run; the page relays prover <-> verifier
-  // through a queue, counting (and optionally delaying or tampering with)
-  // the traffic as it passes through.
+  // A fresh channel pair per run; the page relays prover <-> verifier,
+  // counting (and optionally delaying or tampering with) the traffic as it
+  // passes through.
   const toProver = new MessageChannel();
   const toVerifier = new MessageChannel();
-  const state: RunState = {
-    msgs: 0,
-    bytes: { "prover→verifier": 0, "verifier→prover": 0 },
-    start: performance.now(),
-    results: {},
-    queue: [],
-    pumping: false,
-    tamper: cheatArmed,
-    ticker: window.setInterval(() => {
-      if (run === state) {
-        channelStatus.textContent = `exchanging…\n${fmtTraffic(state)}`;
-      }
-    }, 100),
-  };
+  const state = newRunState();
   run = state;
 
   const relay = (from: MessagePort, to: MessagePort, dir: Dir) => {
     from.onmessage = (ev) => {
-      state.queue.push({ data: ev.data as ArrayBuffer, to, dir });
-      pump(state);
+      deliver(state, { data: ev.data as ArrayBuffer, to, dir });
     };
   };
   relay(toProver.port1, toVerifier.port1, "prover→verifier");
@@ -1414,7 +1930,7 @@ runBtn.addEventListener("click", () => {
   log(proverLog, "executing on Speakup");
   log(verifierLog, "verifying every instruction…");
   if (state.tamper) {
-    log(verifierLog, "⚡ cheat armed: the relay will corrupt one message", "warn");
+    log(verifierLog, "⚡ cheat armed: the relay will corrupt the prover's messages", "warn");
   }
   workers.prover.postMessage(reqs.prover, [toProver.port2]);
   workers.verifier.postMessage(reqs.verifier, [toVerifier.port2]);

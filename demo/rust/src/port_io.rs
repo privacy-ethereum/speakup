@@ -9,6 +9,10 @@
 //!
 //! Messages cross the port as transferred `ArrayBuffer`s (no copies in JS).
 //! Boundaries don't matter: this is a byte stream to the codec above it.
+//! Writes are buffered until `poll_flush` so that one flush batch becomes one
+//! `postMessage` — the mux writes each frame as two `poll_write` calls
+//! (header, then body) and flushes once per drive-loop pass, so per-write
+//! posting would double the page-visible message count for no reason.
 
 use std::{
     collections::VecDeque,
@@ -29,6 +33,8 @@ pub struct PortIo {
     outgoing: mpsc::UnboundedSender<Vec<u8>>,
     /// Bytes received but not yet read out.
     buf: VecDeque<u8>,
+    /// Bytes written but not yet flushed to the port.
+    wbuf: Vec<u8>,
 }
 
 /// Wires `port` into a [`PortIo`]. The port's `onmessage` is taken over and
@@ -63,6 +69,7 @@ pub fn port_io(port: MessagePort) -> PortIo {
         incoming,
         outgoing,
         buf: VecDeque::new(),
+        wbuf: Vec::new(),
     }
 }
 
@@ -90,21 +97,26 @@ impl AsyncRead for PortIo {
 
 impl AsyncWrite for PortIo {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
         data: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.outgoing
-            .unbounded_send(data.to_vec())
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "port closed"))?;
+        self.wbuf.extend_from_slice(data);
         Poll::Ready(Ok(data.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.wbuf.is_empty() {
+            return Poll::Ready(Ok(()));
+        }
+        let batch = std::mem::take(&mut self.wbuf);
+        self.outgoing
+            .unbounded_send(batch)
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "port closed"))?;
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_flush(cx)
     }
 }

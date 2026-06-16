@@ -49,6 +49,9 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 regex-dfa-core = { version = "0.0.0", path = "../guests/regex-core" }
 transcript-core = { version = "0.0.0", path = "../guests/transcript-core" }
+# `host`: signing, comb tables, and advice generation — run in the workers,
+# never inside the VM (the guest links the same crate without the feature).
+ecdsa-core = { version = "0.0.0", path = "../guests/ecdsa-core", features = ["host"] }
 
 [dev-dependencies]
 futures = "0.3"

@@ -31,9 +31,9 @@
         <button data-program="regex">regex</button>
         <button data-program="luhn">credit card</button>
         <button data-program="csv">csv average</button>
-        <button data-program="json">json claims</button>
-        <button data-program="transcript">https transcript</button>
-        <button data-program="ecdsa">ecdsa <span class="soon">soon</span></button>
+        <button data-program="json">json claims <span class="beta">beta</span></button>
+        <button data-program="transcript">https transcript <span class="beta">beta</span></button>
+        <button data-program="ecdsa">ecdsa <span class="beta">beta</span></button>
         <button data-program="custom">custom wasm</button>
       </nav>
     </header>
@@ -65,6 +65,11 @@
           </div>
           <input id="regex-text-input" type="text" value="alice@example.com" maxlength="256" hidden />
           <input id="card-input" type="text" value="4539 1488 0343 6467" maxlength="30" hidden />
+          <input id="ecdsa-input" type="text" value="permit #4221: alice may enter the vault" maxlength="512" hidden />
+          <div class="presets" id="ecdsa-corrupt-row" hidden>
+            <label><input type="checkbox" id="ecdsa-corrupt" />
+              hand over a tampered signature — the proof honestly fails</label>
+          </div>
           <textarea id="csv-input" rows="6" spellcheck="false" hidden>62000,12
 71000,8
 58000,15
@@ -90,6 +95,13 @@
     "last_audit": "2025-11-12T12:00:00Z"
 }</textarea>
           <textarea id="transcript-input" rows="14" readonly spellcheck="false" hidden></textarea>
+        </div>
+        <!-- Shown instead of the program/input boxes when this page is a
+             remote verifier: the real prover lives on the other device. -->
+        <div class="remote-placeholder">
+          <div class="remote-mark">❓</div>
+          <p>The prover — and its secret — are on the other device.<br />
+            Nothing but protocol messages reaches this page.</p>
         </div>
         <div class="log" id="prover-log" aria-live="polite"></div>
       </section>
@@ -136,6 +148,10 @@
           <input id="transcript-expect" type="text" spellcheck="false"
                  placeholder="expected value" />
         </div>
+        <div class="memory center-input" id="ecdsa-row" hidden>
+          <div class="label">public key &amp; curve — known to both</div>
+          <div class="claim" id="ecdsa-claim">loading…</div>
+        </div>
         <div class="memory center-input" id="custom-row" hidden>
           <div class="label">custom guest — public, both parties run the same module</div>
           <div class="dropzone" id="dropzone" tabindex="0">
@@ -170,14 +186,28 @@
           </label>
         </div>
 
-        <button id="cheat" class="cheat" hidden>⚡ tamper with a message</button>
+        <button id="cheat" class="cheat">⚡ tamper with the traffic</button>
+
+        <div class="remote-box" id="remote-box" hidden>
+          <button id="invite" class="invite">📱 verify from another device</button>
+          <div class="invite-panel" id="invite-panel" hidden>
+            <canvas id="invite-qr" hidden></canvas>
+            <a id="invite-link" class="invite-link" target="_blank" rel="noreferrer"></a>
+            <div class="remote-status" id="invite-status">creating invite…</div>
+            <button class="link-btn" id="invite-cancel">cancel</button>
+          </div>
+          <div class="invite-panel" id="remote-connected" hidden>
+            <div class="remote-status" id="remote-status"></div>
+            <button class="link-btn" id="remote-disconnect">disconnect</button>
+          </div>
+        </div>
 
         <p class="note">
           Runs the real protocol — Chou-Orlandi base OT, KOS extension, Ferret
           expansion — not a mock. Each party lives in its own web worker with
           its own isolated WebAssembly memory; this page only relays (and
-          counts) their messages. In production the two workers would be two
-          machines.
+          counts) their messages. Or make it literally two machines: have a
+          second device verify over a direct peer-to-peer channel.
         </p>
       </section>
 
@@ -194,6 +224,13 @@
         <div class="memory">
           <div class="label">prover's input, as the verifier sees it</div>
           <div class="blind" id="blind-cell">░░░░░░░░</div>
+        </div>
+        <!-- Shown instead of the program/blind boxes when a remote verifier
+             is connected: the real verifier lives on the scanned device. -->
+        <div class="remote-placeholder">
+          <div class="remote-mark">📱</div>
+          <p>The verifier runs on the other device,<br />
+            checking every step — and its own copy of the program — there.</p>
         </div>
         <div class="log" id="verifier-log" aria-live="polite"></div>
       </section>

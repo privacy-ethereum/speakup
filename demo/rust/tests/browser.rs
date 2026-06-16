@@ -6,9 +6,9 @@
 
 use wasm_bindgen_test::*;
 use zkvm_demo::{
-    age_zkvm, build_table, csv_zkvm, custom_zkvm, guest_wasm, json_info, json_zkvm, luhn_zkvm,
-    module_exports, prover_square, regex_zkvm, sha256_zkvm, square_zkvm, transcript_info,
-    transcript_zkvm, verifier_square,
+    age_zkvm, build_table, csv_zkvm, custom_zkvm, ecdsa_zkvm, guest_wasm, json_info, json_zkvm,
+    luhn_zkvm, module_exports, prover_square, regex_zkvm, sha256_zkvm, square_zkvm,
+    transcript_info, transcript_zkvm, verifier_square,
 };
 
 // A dedicated worker, not the page: rayon's parallel sections block the
@@ -177,6 +177,17 @@ async fn transcript_runs_in_browser() {
     assert!(out.starts_with(r#"{"ok":1,"value":""#), "{out}");
     // An out-of-range header index fails before the protocol runs.
     assert!(transcript_zkvm("resp:99".into(), None).await.is_err());
+}
+
+#[wasm_bindgen_test]
+async fn ecdsa_runs_in_browser() {
+    init_threads().await;
+    // The prover signs off the VM and proves verification inside it; both
+    // the message and the signature stay private.
+    let msg = b"attest: the prover holds a validly signed message".to_vec();
+    assert_eq!(ecdsa_zkvm(msg.clone(), false).await.unwrap(), 1);
+    // One flipped signature bit fails honestly.
+    assert_eq!(ecdsa_zkvm(msg, true).await.unwrap(), 0);
 }
 
 #[wasm_bindgen_test]

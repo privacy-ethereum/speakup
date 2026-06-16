@@ -92,14 +92,53 @@ Public data is concrete in the VM: branching and indexing on public params,
 public writes (`Write::Public`), and public loop bounds are all fine — the
 regex table and CSV column index rely on this.
 
+## The other rule for guest code: memory authentication
+
+The VM authenticates linear memory per byte: a load faults
+(`MemAuthMissing { addr }`) unless that byte was either written by the host
+(`Vm::write` before the call) or stored by a prior guest instruction in the
+same run. There is **no bulk-memory support** — `memory.fill` and
+`memory.copy` write bytes the VM never authenticates. The traps:
+
+- A large local array **returned or moved** by value (a `[u64; N]` out of a
+  helper, `core::array::from_fn` materializing then copying to its slot)
+  lowers to `memory.copy`; reading it back faults. `memory.fill` of a local
+  that is then **fully overwritten** is fine (sha-256's `block`/`w`) — only
+  the unauthenticated `copy` (and a `fill`'d byte that's never re-stored) bite.
+- So a guest must NOT slurp its big inputs into stack arrays. Read them
+  straight from the authenticated static buffers the host wrote: pass the
+  shared logic byte/word **accessors**, not `&[u8]`/`&[u64]`. The ecdsa guest
+  does this (`verify(msg_len, |i| MSG[i], |i| word(&TABLE,i), …)`); a
+  slice-backed `verify_slices` serves host code and native tests, where stack
+  arrays are free. Confirm a clean build with
+  `wasm-tools print … | grep -nE 'memory\.(copy|fill)'` — the only survivors
+  should be tiny fully-overwritten locals and dynamic-size copies inside
+  dlmalloc/fmt (concrete heap data, never read back as VM inputs).
+
 ## Architecture notes
 
 - One worker per party (`web/src/party.worker.ts`, spawned twice), each with
   its own wasm memory, talking over a MessageChannel. The page relays every
-  message (`web/src/main.ts`): that's where traffic counters, the slow-motion
-  queue, and the cheat tamper live.
+  message (`web/src/main.ts`): that's where traffic counters, the simulated
+  latency, and the cheat tamper live. Latency is per direction, overlapping
+  (delivery scheduled at arrival + latency), so it costs latency × round-trip
+  depth, not × message count. The tamper flips a middle byte of EVERY
+  payload-carrying (≥ TAMPER_MIN_BYTES) prover→verifier message, not a single
+  one: the relay numbers messages as they arrive interleaved across both
+  directions, so a fixed index lands on different protocol data run to run,
+  and a lone corrupted OT correlation can fall OUTSIDE the consistency-check
+  sample — the proof then verifies anyway (the one outcome a tamper demo must
+  never show; this was the actual bug when it was a single fixed-index flip,
+  reproducible on the transcript/json tabs). Corrupting the whole
+  prover→verifier stream is caught deterministically — the COT bootstrap
+  check fires (verified on all eight example programs + ecdsa). Sub-256 B
+  messages are skipped: a flipped frame header trips the transport ("frame
+  size too big") not the crypto, and keeping the story about the proof.
 - `rust/src/port_io.rs` adapts a MessagePort to AsyncRead/AsyncWrite via mpsc
-  pumps (the mux needs Send+Sync; MessagePort is neither). `port_mux.rs` runs
+  pumps (the mux needs Send+Sync; MessagePort is neither). Writes are
+  buffered until `poll_flush`, so one mux flush batch = one postMessage —
+  without this every frame costs two messages (header + body) and the
+  page-visible msg counter doubles. `port_mux.rs` runs
   a `tlsn-mux` connection over it and implements mpz's `Mux`, so each context
   fork gets its own logical stream (`Context::new` instead of
   `new_single_threaded`).
@@ -167,16 +206,85 @@ regex table and CSV column index rely on this.
   editable: every edit re-requests `json_info` (paths) and `json_public`
   (words) from the prover worker, with the doc echoed back in each
   response so stale answers are dropped.
-- Feature flags: `web/src/config.ts`, URL override `?cheat=1` — tamper
-  button (default off, undecided whether it ships). The WAT editor was
-  replaced by the "custom wasm" tab (default on): drop a compiled guest,
+- The ecdsa guest (`guests/ecdsa` + `guests/ecdsa-core`) proves REAL ECDSA
+  verification (sha-256, `u₁·G + u₂·Q`, `x ≟ r`) over a private message AND a
+  private signature; only the 0/1 verdict is revealed. The curve is a toy
+  64-bit sibling of secp256k1 (`y² = x³ + 2` over `p = 2⁶⁴ − 453`, prime
+  group order `n = 2⁶⁴ − 7386677115`, cofactor 1) — no security, sized to fit
+  the VM's proving budget; P-256 width needs ~100× the i64 multiplies (one
+  `i64.mul` ≈ 7.7k AND gates, and `mod_mul` is ~3 schoolbook 64×64 products),
+  which wants upstream native-bignum/RAM work first. Params were found by a
+  one-off search (`ecdsa-core/tests/gen.rs`, `#[ignore]`d): the j=0 family has
+  CM by √−3, so orders come in closed form from `4p = L² + 27M²` (modified
+  Cornacchia) and are verified rigorously (prime `n` in the Hasse interval +
+  `n·P = O`); `parameters_are_consistent` re-checks the hardcoded constants
+  every run. The advice pattern (as in transcript) carries the data-dependent
+  and expensive parts as private hints the guest only CHECKS branch-free:
+  field inverses (1/(2y), 1/(x₂−x₁), and `s⁻¹ mod n`) are supplied and pinned
+  via `denom·inv = 1` (a prime field forces them exact; bad advice can only
+  flip the verdict to 0); `u₁·G + u₂·Q` is a fixed-window comb (8 doublings +
+  16 masked-merge table additions + 1 public correction) over a 256-entry/base
+  public table both parties derive from Q off the VM, with fixed offsets so no
+  honest affine point hits infinity. Both moduli are pseudo-Mersenne, so
+  reduction is fold-and-add, no Montgomery. The host side (`feature = "host"`,
+  never linked into the VM) signs, builds the table, and generates advice by
+  replaying the SAME `walk` as the in-VM verifier — they can't drift; native
+  tests differential-check `verify_slices` against a textbook verifier and
+  assert every one of the 28 advice words is load-bearing. Both moduli's
+  `mod_mul` and the comb live in `ecdsa-core` so they're shared and tested off
+  the VM. See the memory-authentication rule above: the guest reads MSG/TABLE/
+  ADVICE via accessors (no large stack arrays).
+- Remote verifier (`web/src/remote.ts` + the remote section of main.ts;
+  flag `remote`, default on, `?remote=0`): the page relay is the single
+  point where messages cross parties, so a second device is page-level
+  rewiring only — the host (prover) device shows a QR of `?join=<peer-id>`,
+  the scanning device becomes the verifier, and each page pumps its own
+  party's MessagePort into one reliable PeerJS DataChannel instead of into
+  the other local worker. Workers/bindings unchanged; both workers still
+  spawn on both devices (the idle one serves `guest_info`, so each device
+  shows its own independently computed hash). Only signaling touches the
+  PeerJS cloud broker; the protocol flows P2P (LAN-local on a shared
+  network; no TURN, so client-isolated guest Wi-Fi blocks it — hotspot is
+  the workaround). Wire format: 1 tag byte, then protocol bytes verbatim
+  or control JSON with explicit typed-array encoding (run requests carry
+  Uint8Array/Uint32Array/BigInt64Array); PeerJS binary serialization
+  chunks >16 KB frames, so the 1 MB custom-wasm request needs no extra
+  care. Control flow: the guest's pkg version rides in connection
+  metadata and the host answers `hello` (version mismatch = different
+  embedded guests → refuse); Run on the host sends `start` carrying the
+  verifier request (public data only, same zeroed private fields as local
+  mode) + blind string + claim labels (`RemoteDisplay`, consumed by the
+  json/transcript render overrides) + summary log lines; `done`/`error`/
+  `abort` mirror to the peer. Both directions go through `deliver()`, so
+  traffic counters and the tamper button work per-device — but the tamper
+  is hidden on the verifier (guest) device (`body.remote-guest .cheat`):
+  the tamper only fires on the prover→verifier direction, and the guest
+  would merely corrupt its own inbound bytes and self-reject. Only the
+  prover's device tamper is a true MITM (corrupt before send); the
+  verifier is the checker, so the button lives with the prover. While
+  connected, the remote party's pane is replaced by a
+  placeholder (`.remote-placeholder`, toggled via `remote-host`/
+  `remote-guest` body classes) — the local UI in that pane would show
+  this page's inputs, not the actual remote party's; the pane's log stays
+  (it carries the remote progress lines). Gotchas: a `start` can beat
+  worker readiness
+  (`pendingStart`) and protocol bytes race ahead of it (`pendingBytes`,
+  flushed in order); a broker blip after connect must NOT tear the link
+  down (no peer-level error handler inside RemoteLink); `RemoteLink.close()`
+  suppresses its own teardown event, so deliberate disconnects invoke
+  `remoteEvents.onClose` themselves.
+- Feature flags: `web/src/config.ts` — only `remote` remains (default on,
+  `?remote=0` to disable). The tamper button now ships on by default (the
+  last flag, `cheat`, was removed once the every-message corruption was
+  verified to reject on every program — see the relay note above). The WAT
+  editor was replaced by the "custom wasm" tab (default on): drop a compiled guest,
   the prover worker inspects it (`module_exports`), the page builds one
   input per argument with a private/public toggle, and the generic
   `prover_custom`/`verifier_custom` entry points call any exported
   function over i32/i64 scalars. The verifier request carries zeroed
   private values. NOTE: never name a `#[wasm_bindgen]` parameter `wasm` —
   the generated glue shadows its own `wasm` instance object.
-  The relay-delay slider is always shown; the step-through-messages mode
+  The latency slider is always shown; the step-through-messages mode
   was dropped. The Run button morphs into Abort during a run (abort
   terminates and respawns both workers — the protocol can't be interrupted
   any other way).
@@ -194,16 +302,15 @@ regex table and CSV column index rely on this.
 - Perf anchors (Chrome, M-series 18 cores → 9 threads/party, threaded build
   + mpz c215974 + wasm-simd aes patch): square ≈ 0.08 s; regex email ≈ 0.28 s;
   csv 4 rows ≈ 0.11 s; transcript (jsonplaceholder_post, 1543 private bytes)
-  ≈ 0.37 s / 270 msgs / ~1.5 MB; sha-256 16 KB ≈ 3.0 s / 400 msgs / ~2.5 MB;
-  64 KB ≈ 11 s (OOM-aborted before c215974); 128 KB still OOMs. Pre-aes-patch:
-  square 0.10 s, regex 0.31 s, transcript 0.42 s, sha-256 16 KB 3.7 s, 64 KB
-  13 s. Pre-threads baselines: square 0.4 s, sha-256 16 KB 10.7 s, regex 1.6 s.
-- `ecdsa` is a placeholder tab only (web/src/main.ts PROGRAMS entry + the
-  index.html button with the `.soon` badge): no guest crate or bindings
-  exist; `requests()` returns a coming-soon message so Run never starts a
-  protocol. Implementing it means the usual full set: guest crate,
-  rust/ entry points + build.rs line, worker request type, PROGRAMS entry.
-- Possible next: the ECDSA guest (signature verification inside the VM),
-  guided stepper narrative, more polish; Speakup RAM support will
-  eventually allow private-offset designs (see mpz age-span discussion)
-  and may relax the black_box discipline if `select` lands.
+  ≈ 0.37 s / 140 msgs / ~1.5 MB; sha-256 16 KB ≈ 3.0 s / 206 msgs / ~2.5 MB
+  (msg counts post write-coalescing — pre-coalescing 270 / 400);
+  64 KB ≈ 11 s (OOM-aborted before c215974); 128 KB still OOMs;
+  ecdsa (toy 64-bit curve, 39-byte msg) ≈ 4.5 s / 255 msgs / ~3.2 MB.
+  Pre-aes-patch: square 0.10 s, regex 0.31 s, transcript 0.42 s, sha-256 16 KB
+  3.7 s, 64 KB 13 s. Pre-threads baselines: square 0.4 s, sha-256 16 KB
+  10.7 s, regex 1.6 s.
+- Possible next: a wider-field ECDSA (P-256) once the VM gains native bignums
+  or RAM (~100× the multiplies today); guided stepper narrative, more polish;
+  Speakup RAM support will eventually allow private-offset designs (see mpz
+  age-span discussion) and may relax the black_box discipline if `select`
+  lands.

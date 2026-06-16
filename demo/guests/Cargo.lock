@@ -67,6 +67,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecdsa-core"
+version = "0.0.0"
+
+[[package]]
+name = "ecdsa-guest"
+version = "0.0.0"
+dependencies = [
+ "ecdsa-core",
+ "mpz-vm-sys",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

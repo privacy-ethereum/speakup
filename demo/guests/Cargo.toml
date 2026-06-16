@@ -13,6 +13,8 @@ members = [
     "json",
     "transcript",
     "transcript-core",
+    "ecdsa",
+    "ecdsa-core",
 ]
 
 [workspace.dependencies]

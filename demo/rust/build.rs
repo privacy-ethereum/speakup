@@ -15,6 +15,7 @@ const GUESTS: &[(&str, &str)] = &[
     ("csv_guest.wasm", "csv.wasm"),
     ("json_guest.wasm", "json.wasm"),
     ("transcript_guest.wasm", "transcript.wasm"),
+    ("ecdsa_guest.wasm", "ecdsa.wasm"),
 ];
 
 /// The transcript demo's captured exchange, from transcript-verify's
@@ -41,6 +42,8 @@ fn main() {
         "json",
         "transcript",
         "transcript-core",
+        "ecdsa",
+        "ecdsa-core",
         "Cargo.toml",
     ] {
         println!("cargo:rerun-if-changed={}", guests.join(sub).display());
