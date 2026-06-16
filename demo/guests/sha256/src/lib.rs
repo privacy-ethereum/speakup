@@ -11,6 +11,8 @@
 
 use std::alloc::Layout;
 
+use mpz_vm_sys::reveal;
+
 const H0: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
@@ -25,12 +27,6 @@ const K: [u32; 64] = [
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
-
-#[link(wasm_import_module = "vc")]
-extern "C" {
-    fn reveal_bytes(ptr: i32, len: i32) -> i32;
-    fn reveal_bytes_wait(handle: i32);
-}
 
 /// The Component Model canonical `realloc`:
 /// `cabi_realloc(old_ptr, old_size, align, new_size) -> ptr`.
@@ -60,10 +56,8 @@ pub extern "C" fn cabi_realloc(old_ptr: i32, old_size: i32, align: i32, new_size
 pub extern "C" fn hash(ptr: i32, len: i32) -> i32 {
     let digest_ptr = ptr + len;
     sha256(ptr as *const u8, len as usize, digest_ptr as *mut u8);
-    unsafe {
-        let handle = reveal_bytes(digest_ptr, 32);
-        reveal_bytes_wait(handle);
-    }
+    let digest = unsafe { std::slice::from_raw_parts(digest_ptr as *const u8, 32) };
+    reveal(digest).wait();
     digest_ptr
 }
 
