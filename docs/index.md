@@ -9,7 +9,7 @@ This document provides a **design draft** for a zero-knowledge virtual machine f
 
 SpeakUp is built on WebAssembly, enabling developers to write provable programs in any language that compiles to Wasm. WebAssembly provides a well-defined embedding interface which makes SpeakUp work naturally alongside other application code.
 
-A [live browser demo](demo.md) accompanies this document: a prover and a verifier running the real protocol against each other, in your browser tab.
+A [live browser demo](https://privacy-ethereum.github.io/speakup/demo/) accompanies this document: a prover and a verifier running the real protocol against each other, in your browser tab.
 
 ```{toctree}
 :maxdepth: 2
@@ -17,6 +17,5 @@ A [live browser demo](demo.md) accompanies this document: a prover and a verifie
 introduction
 proof-system
 architecture/index
-profile-viewer
-demo
+Try It! <https://privacy-ethereum.github.io/speakup/demo/>
 ```
