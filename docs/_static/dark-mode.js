@@ -55,9 +55,6 @@
         var sidebar = document.querySelector("div.sphinxsidebarwrapper");
         if (!sidebar) return;
 
-        var wrapper = document.createElement("div");
-        wrapper.id = "dark-mode-toggle-wrapper";
-
         var btn = document.createElement("button");
         btn.id = "dark-mode-toggle";
         btn.type = "button";
@@ -69,13 +66,23 @@
             storeTheme(next);
             applyTheme(next);
         });
-        wrapper.appendChild(btn);
 
-        var searchbox = sidebar.querySelector("#searchbox");
-        if (searchbox && searchbox.parentNode === sidebar) {
-            sidebar.insertBefore(wrapper, searchbox.nextSibling);
+        // Sit the toggle next to the GitHub link (to its right) when present,
+        // otherwise fall back to its own wrapper after the searchbox.
+        var githubWrapper = sidebar.querySelector("#sidebar-github-wrapper");
+        if (githubWrapper) {
+            githubWrapper.appendChild(btn);
         } else {
-            sidebar.appendChild(wrapper);
+            var wrapper = document.createElement("div");
+            wrapper.id = "dark-mode-toggle-wrapper";
+            wrapper.appendChild(btn);
+
+            var searchbox = sidebar.querySelector("#searchbox");
+            if (searchbox && searchbox.parentNode === sidebar) {
+                sidebar.insertBefore(wrapper, searchbox.nextSibling);
+            } else {
+                sidebar.appendChild(wrapper);
+            }
         }
 
         applyTheme(document.documentElement.dataset.theme || "light");
