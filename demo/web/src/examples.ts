@@ -127,6 +127,7 @@ export const EXAMPLES: ExampleProgram[] = [
         name: "message",
         label: "message to hash",
         value: "hello speakup",
+        rows: 4,
         maxLength: 131072,
         presets: [
           { label: "1 KB", bytes: 1024 },
