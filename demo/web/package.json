@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "build:guest": "bash ../build-guest.sh",
-    "predev": "npm run build:guest",
+    "build:wasm": "bash ../build-wasm.sh",
+    "predev": "npm run build:wasm && npm run build:guest",
     "dev": "vite",
-    "prebuild": "npm run build:guest",
+    "prebuild": "npm run build:wasm && npm run build:guest",
     "build": "vite build",
     "preview": "vite preview"
   },
