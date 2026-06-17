@@ -20,6 +20,7 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build"]
 
 html_theme = "alabaster"
+html_title = "SpeakUp"
 html_logo = "_static/logo.svg"
 html_favicon = "_static/favicon.svg"
 html_static_path = ["_static"]

@@ -1,0 +1,10 @@
+{% extends "!layout.html" %}
+{# Browser-tab title: "<page> / SpeakUp" (forward-slash separator). The landing
+   page keeps its "SpeakUp" H1 but its tab reads "Home". #}
+{%- block htmltitle %}
+{%- if pagename == master_doc %}
+<title>Home / {{ docstitle|e }}</title>
+{%- else %}
+<title>{{ title|striptags|e }} / {{ docstitle|e }}</title>
+{%- endif %}
+{%- endblock %}
