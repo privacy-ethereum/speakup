@@ -41,6 +41,27 @@ header { padding: 1.5rem 2rem 0.5rem; text-align: center; }
 h1.logo { margin: 0; line-height: 0; }
 h1.logo img { width: 15rem; max-width: 80%; height: auto; }
 .subtitle { margin: 0.5rem 0 0; font-size: 0.95rem; color: var(--muted); }
+.header-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0.6rem 0 0;
+}
+.header-link {
+  display: inline-flex;
+  color: var(--muted);
+  line-height: 0;
+  transition: color 0.15s;
+}
+.header-link:hover { color: var(--text); }
+.header-rule {
+  width: 100%;
+  margin: 1.25rem 0 0;
+  border: none;
+  border-top: 1px solid var(--panel-edge);
+  opacity: 0.18;
+}
 .tagline { max-width: 46rem; margin: 0.6rem auto 0; color: var(--muted); }
 
 main {
