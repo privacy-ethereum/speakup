@@ -238,6 +238,33 @@ table.docutils th {
     border-color: var(--table-border);
 }
 
+#sidebar-github-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 16px 0 8px 0;
+}
+
+#sidebar-github {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    color: var(--sidebar-link);
+    border: 1px solid var(--protocol-border);
+    border-radius: 13px;
+    font-size: 13px;
+    line-height: 1;
+    transition: border-color 0.25s ease, color 0.25s ease;
+}
+
+#sidebar-github:hover {
+    border-bottom: 1px solid var(--link-color);
+    border-color: var(--link-color);
+    color: var(--link-color);
+}
+
 #dark-mode-toggle-wrapper {
     display: flex;
     justify-content: center;

@@ -36,6 +36,7 @@ html_sidebars = {
     "**": [
         "navigation.html",
         "searchbox.html",
+        "github.html",
     ],
 }
 
