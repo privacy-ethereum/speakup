@@ -21,6 +21,7 @@ exclude_patterns = ["_build"]
 
 html_theme = "alabaster"
 html_logo = "_static/logo.svg"
+html_favicon = "_static/favicon.svg"
 html_static_path = ["_static"]
 html_js_files = ["dark-mode.js"]
 html_theme_options = {
