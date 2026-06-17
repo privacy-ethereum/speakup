@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "mpz-vm-sys"
 version = "0.1.0"
-source = "git+https://github.com/privacy-ethereum/mpz?rev=69ee9240ff356b1879513910aa4be612532f0f2d#69ee9240ff356b1879513910aa4be612532f0f2d"
+source = "git+https://github.com/privacy-ethereum/mpz?rev=e208d5051fddc0aa36ab63af027235267c58b953#e208d5051fddc0aa36ab63af027235267c58b953"
 
 [[package]]
 name = "sha256-guest"
