@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.dependencies]
-mpz-vm-sys = { git = "https://github.com/privacy-ethereum/mpz", rev = "b0455d96f1a954fbdb07c3011a9aff31a2db95a5" }
+mpz-vm-sys = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866" }
 
 # Small, branch-free wasm for the zk-vm.
 [profile.release]

@@ -29,7 +29,7 @@ use std::rc::Rc;
 use js_sys::Promise;
 use mpz_common::Context;
 use mpz_core::Block;
-use mpz_ot::{chou_orlandi, ferret, kos};
+use mpz_ot::{chou_orlandi, ferret, softspoken};
 use mpz_vm_core::{Param, ValType, Vm, Write, value::Value};
 use mpz_vm_ir::{ExportKind, Module};
 use mpz_vm_zk::{Prover, Verifier};
@@ -38,10 +38,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 use web_sys::MessagePort;
 
-/// The prover's RCOT receiver: Ferret over KOS over a Chou-Orlandi base OT.
-type ProverSvole = ferret::Receiver<kos::Receiver<chou_orlandi::Sender>>;
-/// The verifier's RCOT sender: Ferret over KOS over a Chou-Orlandi base OT.
-type VerifierSvole = ferret::Sender<kos::Sender<chou_orlandi::Receiver>>;
+/// The prover's RCOT receiver: Ferret over SoftSpoken over a Chou-Orlandi base OT.
+type ProverSvole = ferret::Receiver<softspoken::Receiver<chou_orlandi::Sender>>;
+/// The verifier's RCOT sender: Ferret over SoftSpoken over a Chou-Orlandi base OT.
+type VerifierSvole = ferret::Sender<softspoken::Sender<chou_orlandi::Receiver>>;
 
 fn err(e: impl std::fmt::Debug) -> JsError {
     JsError::new(&format!("{e:?}"))
@@ -88,14 +88,17 @@ fn port_ctx(port: MessagePort) -> Result<Context, JsError> {
 }
 
 /// The prover's half of the RCOT stack. The base-OT roles are swapped
-/// relative to the extension: the prover's KOS receiver is bootstrapped by a
-/// Chou-Orlandi sender.
+/// relative to the extension: the prover's SoftSpoken receiver is bootstrapped
+/// by a Chou-Orlandi sender.
 fn prover_svole() -> ProverSvole {
     let mut rng = StdRng::from_os_rng();
     ferret::Receiver::new(
         ferret::FerretConfig::default(),
         rng.random(),
-        kos::Receiver::new(kos::ReceiverConfig::default(), chou_orlandi::Sender::new()),
+        softspoken::Receiver::new(
+            softspoken::ReceiverConfig::default(),
+            chou_orlandi::Sender::new(),
+        ),
     )
 }
 
@@ -108,8 +111,8 @@ fn verifier_svole() -> VerifierSvole {
     ferret::Sender::new(
         ferret::FerretConfig::default(),
         rng.random(),
-        kos::Sender::new(
-            kos::SenderConfig::default(),
+        softspoken::Sender::new(
+            softspoken::SenderConfig::default(),
             delta,
             chou_orlandi::Receiver::new(),
         ),
