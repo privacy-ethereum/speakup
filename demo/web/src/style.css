@@ -335,12 +335,12 @@ main {
   font-weight: 600;
   padding: 0.7rem 1.5rem;
   color: var(--text);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--prover) 18%, white);
   border: 1px solid var(--panel-edge);
   border-radius: var(--radius);
   cursor: pointer;
 }
-#run:hover:not(:disabled) { background: var(--bg); }
+#run:hover:not(:disabled) { background: color-mix(in srgb, var(--prover) 30%, white); }
 #run:disabled { opacity: 0.5; cursor: wait; }
 #run.done { background: var(--prover); border-color: var(--prover); color: #fff; }
 #run.error { background: var(--err); border-color: var(--err); color: #fff; }
