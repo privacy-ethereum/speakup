@@ -20,14 +20,14 @@ default = []
 no-bundler = ["web-spawn/no-bundler"]
 
 [dependencies]
-mpz-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866" }
-mpz-common = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866", features = ["test-utils"] }
+mpz-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8" }
+mpz-common = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8", features = ["test-utils"] }
 # rayon: parallel transpose/hashing in the KOS/Ferret OT stack. mpz-vm-zk
 # already enables mpz-zk-core/rayon (the QuickSilver check) unconditionally.
-mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866", features = ["rayon"] }
-mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866" }
-mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866" }
-mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", rev = "5663fc5b21e51b03153adfa9473abd16777cc866" }
+mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8", features = ["rayon"] }
+mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8" }
+mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8" }
+mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", rev = "2445f0f254785af402d0c798be6f3ab65fa132d8" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 rayon = "1"
