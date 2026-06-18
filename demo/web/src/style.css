@@ -159,14 +159,8 @@ main {
 
 .guest-form,
 .guest-custom { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
-.guest-desc { width: 100%; }
+.guest-desc { width: 100%; margin: 0.6rem 0; }
 .guest-desc .label { margin-bottom: 0.35rem; }
-.guest-desc-box {
-  padding: 0.75rem 0.85rem;
-  background: var(--field);
-  border: 1px solid var(--panel-edge);
-  border-radius: var(--radius);
-}
 .guest-desc-box p { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
 /* Declarative field inputs only (direct children of the form) — scoped with `>`
    so it does not bleed onto nested custom inputs like the sudoku grid cells. */
