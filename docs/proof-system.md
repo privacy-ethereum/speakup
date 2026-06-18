@@ -94,11 +94,11 @@ Costs below are for Ferret (regular LPN), the current state-of-the-art sVOLE gen
   - Cost
   - Unit
 * - Seed sVOLEs
-  - $\approx 48K$
+  - $2^{16}$
   - sVOLE
 * - Communication
-  - $\approx 1.1$
-  - MB
+  - $128$
+  - KB
 ```
 
 :::
