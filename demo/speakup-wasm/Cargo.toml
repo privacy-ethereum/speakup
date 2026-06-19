@@ -20,14 +20,14 @@ default = []
 no-bundler = ["web-spawn/no-bundler"]
 
 [dependencies]
-mpz-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa" }
-mpz-common = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa", features = ["test-utils"] }
+mpz-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085" }
+mpz-common = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085", features = ["test-utils"] }
 # rayon: parallel transpose/hashing in the KOS/Ferret OT stack. mpz-vm-zk
 # already enables mpz-zk-core/rayon (the QuickSilver check) unconditionally.
-mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa", features = ["rayon"] }
-mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa" }
-mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa" }
-mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", rev = "c1da5b42c373f8e6c7d6ef4a9b1b9239582ae6fa" }
+mpz-ot = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085", features = ["rayon"] }
+mpz-vm-core = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085" }
+mpz-vm-ir = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085" }
+mpz-vm-zk = { git = "https://github.com/privacy-ethereum/mpz", rev = "aed62c20b79e2f31b26bff987176e505bb150085" }
 tlsn-mux = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 web-spawn = { git = "https://github.com/tlsnotary/tlsn-utils", rev = "e99c00d" }
 rayon = "1"
@@ -45,8 +45,19 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
+# Forward the zk-vm's tracing events to the browser console. tracing-web routes
+# to console.*; we skip its performance-timeline layer so it works inside a web
+# worker (no `window`). Set up once per instance in `initialize`.
+tracing-subscriber = "0.3"
+tracing-web = "0.1"
+# Surface Rust panics as console errors (with a message) instead of a bare
+# wasm `unreachable` trap — including panics on the spawned rayon threads.
+console_error_panic_hook = "0.1"
+
 [dev-dependencies]
 futures = "0.3"
+rayon = "1"
+tracing = "0.1"
 wasm-bindgen-test = "0.3"
 # A tiny inline module for the generic-API tests (no guest crate needed).
 wat = "1"
