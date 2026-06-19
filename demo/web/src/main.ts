@@ -1,4 +1,3 @@
-import { FEATURES } from "./config";
 import type { PartyRequest, PartyResponse, Role } from "./party.worker";
 import type { ExportInfo } from "./zkvm";
 import { EXAMPLES, exampleForm, exampleTab, type MountedForm } from "./examples";
@@ -19,13 +18,12 @@ const $ = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 const runBtn = $<HTMLButtonElement>("run");
+const statsPane = $("stats");
 const statPv = $("stat-pv");
 const statVp = $("stat-vp");
 const statTime = $("stat-time");
 const resultBox = $("result-box");
 const resultEl = $("result");
-const cheatBtn = $<HTMLButtonElement>("cheat");
-
 const guestTabs = $("guest-tabs");
 const guestBody = $("guest-body");
 const customConfig = $("custom-config");
@@ -421,16 +419,6 @@ wasmFileInput.addEventListener("change", () => {
   wasmFileInput.value = "";
 });
 
-// --- feature flag: the tamper button (default off) ---
-
-cheatBtn.hidden = !FEATURES.cheat;
-let cheatArmed = false;
-cheatBtn.addEventListener("click", () => {
-  cheatArmed = !cheatArmed;
-  cheatBtn.classList.toggle("armed", cheatArmed);
-  cheatBtn.textContent = cheatArmed ? "⚡ will tamper on the next run" : "⚡ tamper with a message";
-});
-
 // --- the run button ---
 
 const SPINNER = '<span class="spinner" aria-hidden="true"></span>';
@@ -466,10 +454,6 @@ const markReady = () => {
 
 // --- one protocol run ---
 
-/// Which relayed message a cheat corrupts: late enough to be meaningful,
-/// early enough that every run reaches it.
-const TAMPER_AT = 10;
-
 type Dir = "prover→verifier" | "verifier→prover";
 
 interface QueuedMsg {
@@ -485,13 +469,11 @@ interface Traffic {
 interface RunState {
   pv: Traffic; // prover → verifier
   vp: Traffic; // verifier → prover
-  count: number; // total relayed messages — internal, only to place a tamper
   start: number;
   results: Partial<Record<Role, string>>;
   ticker: number;
   queue: QueuedMsg[];
   pumping: boolean;
-  tamper: boolean;
 }
 let run: RunState | null = null;
 
@@ -503,11 +485,6 @@ const showTraffic = (s: RunState) => {
 const forward = (state: RunState, item: QueuedMsg) => {
   const t = item.dir === "prover→verifier" ? state.pv : state.vp;
   t.bytes += item.data.byteLength;
-  state.count += 1;
-  if (state.tamper && state.count === TAMPER_AT) {
-    const view = new Uint8Array(item.data);
-    view[Math.min(8, view.length - 1)] ^= 0x01;
-  }
   item.to.postMessage(item.data, [item.data]);
 };
 
@@ -531,7 +508,6 @@ const endRun = () => {
   if (!run) return;
   clearInterval(run.ticker);
   run = null;
-  if (cheatArmed) cheatBtn.click(); // disarm after one use
 };
 
 /// The protocol can't be interrupted mid-computation: kill both workers and
@@ -650,6 +626,7 @@ runBtn.addEventListener("click", () => {
   const script = editor.state.doc.toString();
 
   setRunButton("running");
+  statsPane.hidden = false;
   resultBox.hidden = true;
   statTime.textContent = "—";
   statPv.textContent = "0 B";
@@ -662,12 +639,10 @@ runBtn.addEventListener("click", () => {
   const state: RunState = {
     pv: { bytes: 0 },
     vp: { bytes: 0 },
-    count: 0,
     start: performance.now(),
     results: {},
     queue: [],
     pumping: false,
-    tamper: cheatArmed,
     ticker: window.setInterval(() => {
       if (run === state) showTraffic(state);
     }, 100),

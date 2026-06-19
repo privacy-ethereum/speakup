@@ -159,14 +159,8 @@ main {
 
 .guest-form,
 .guest-custom { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
-.guest-desc { width: 100%; }
+.guest-desc { width: 100%; margin: 0.6rem 0; }
 .guest-desc .label { margin-bottom: 0.35rem; }
-.guest-desc-box {
-  padding: 0.75rem 0.85rem;
-  background: var(--field);
-  border: 1px solid var(--panel-edge);
-  border-radius: var(--radius);
-}
 .guest-desc-box p { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
 /* Declarative field inputs only (direct children of the form) — scoped with `>`
    so it does not bleed onto nested custom inputs like the sudoku grid cells. */
@@ -335,12 +329,12 @@ main {
   font-weight: 600;
   padding: 0.7rem 1.5rem;
   color: var(--text);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--prover) 18%, white);
   border: 1px solid var(--panel-edge);
   border-radius: var(--radius);
   cursor: pointer;
 }
-#run:hover:not(:disabled) { background: var(--bg); }
+#run:hover:not(:disabled) { background: color-mix(in srgb, var(--prover) 30%, white); }
 #run:disabled { opacity: 0.5; cursor: wait; }
 #run.done { background: var(--prover); border-color: var(--prover); color: #fff; }
 #run.error { background: var(--err); border-color: var(--err); color: #fff; }
@@ -427,19 +421,6 @@ main {
   font-size: 0.9rem;
   word-break: break-all;
 }
-
-.cheat {
-  margin-top: 0.75rem;
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 0.4rem 0.8rem;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px dashed var(--err);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.cheat.armed { color: #fff; background: var(--err); border-style: solid; }
 
 footer {
   padding: 1rem 2rem 1.5rem;

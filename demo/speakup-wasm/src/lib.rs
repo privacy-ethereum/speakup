@@ -66,6 +66,9 @@ pub async fn initialize(threads: usize) -> Result<(), JsValue> {
         return Ok(());
     }
 
+    console_error_panic_hook::set_once();
+    init_console_tracing();
+
     wasm_bindgen_futures::JsFuture::from(web_spawn::start_spawner()).await?;
 
     rayon::ThreadPoolBuilder::new()
@@ -79,6 +82,25 @@ pub async fn initialize(threads: usize) -> Result<(), JsValue> {
         .map_err(|e| JsError::new(&format!("{e:?}")))?;
 
     Ok(())
+}
+
+/// Routes the zk-vm's `tracing` events to the browser console. Console-only
+/// (no performance-timeline layer) so it runs inside a web worker, where
+/// there is no `window`.
+fn init_console_tracing() {
+    use tracing_subscriber::filter::LevelFilter;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
+    use tracing_web::MakeWebConsoleWriter;
+
+    let fmt_layer = fmt::layer()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(MakeWebConsoleWriter::new())
+        .with_filter(LevelFilter::DEBUG);
+    // `try_init` (not `init`): a second call — or a `log` logger already
+    // installed by another crate — returns Err rather than panicking the wasm.
+    let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
 }
 
 /// Builds a muxed [`Context`] over a `MessagePort` to the peer: protocol
