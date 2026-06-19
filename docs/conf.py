@@ -7,6 +7,7 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.githubpages",
     "sphinx.ext.todo",
+    "sphinxext.opengraph",
 ]
 
 myst_enable_extensions = [
@@ -47,5 +48,19 @@ html_show_sourcelink = False
 html_show_sphinx = False
 
 mathjax_path = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+
+# Social link previews (Open Graph + Twitter Card). The extension fills
+# og:title/og:description per page; ogp_image must be an absolute URL and a
+# raster format (SVG is ignored by most scrapers).
+ogp_site_url = "https://privacy-ethereum.github.io/speakup/"
+ogp_image = "https://privacy-ethereum.github.io/speakup/_static/social-card.png"
+ogp_use_first_image = False
+ogp_enable_meta_description = True
+# Pin the shared card; don't let the extension auto-generate per-page images.
+ogp_social_cards = {"enable": False}
+# Twitter falls back to OG tags but defaults to a small card without this.
+ogp_custom_meta_tags = [
+    '<meta name="twitter:card" content="summary_large_image" />',
+]
 
 todo_include_todos = True
