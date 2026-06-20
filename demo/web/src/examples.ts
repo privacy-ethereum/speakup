@@ -4,6 +4,7 @@
 // form, and its built-in module all appear — no other wiring needed.
 
 import { sudokuForm } from "./sudoku-form";
+import { SCRIPT_TOGGLE } from "./copy";
 
 /// A size preset: fills a text field with `bytes` of deterministic filler so
 /// runs are reproducible and the cost scaling is visible.
@@ -116,7 +117,7 @@ const parseGrid = (text: string): Uint8Array => {
 export const EXAMPLES: ExampleProgram[] = [
   {
     id: "sha256",
-    label: "sha-256",
+    label: "sha256",
     description:
       "Prove the SHA-256 digest of the provided message, hiding the input from the verifier.",
     moduleName: "sha256.wasm (built-in)",
@@ -263,7 +264,7 @@ export function exampleForm(ex: ExampleProgram): MountedForm {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "link-btn js-view-script";
-  toggle.textContent = "view script ▸";
+  toggle.textContent = SCRIPT_TOGGLE.show;
   form.append(toggle);
 
   return { el: form, values };

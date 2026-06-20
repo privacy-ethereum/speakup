@@ -79,6 +79,56 @@ main {
   padding: 1rem 1.25rem;
 }
 
+/* The guest tab strip preceded by a small "(i)" tab. The (i) selects an
+   "about" view (the .guest-about pane) just like any other tab. */
+.tab-row { display: flex; align-items: flex-end; gap: 0.3rem; }
+
+.info-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  padding: 0.4rem 0.7rem;
+  margin: 0 0 -1px 0; /* overlap the pane top border like the other tabs */
+  color: var(--muted);
+  background: var(--field);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer;
+  position: relative;
+  z-index: 0;
+  transition: color 0.15s;
+}
+.info-tab:hover { color: var(--text); }
+.info-tab svg { width: 14px; height: 14px; display: block; }
+.info-tab.active { color: var(--text); background: var(--panel); z-index: 2; }
+.info-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  background: var(--panel);
+}
+
+/* The info ("about") tab has no program to prove — hide the Prove button.
+   Wins over a [hidden]=false set by the verifier view when still on the tab. */
+body.on-about #run { display: none; }
+
+/* The (i) tab's content: a short pane description above the VM animation. */
+.guest-intro {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.about-anim {
+  width: 100%;
+  max-width: 450px;
+  margin: 0 auto 0.6rem;
+}
+
 .label {
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -108,12 +158,19 @@ main {
    of them, so they read as tucked behind), the active tab sits IN FRONT and
    merges via the ::after bridge. */
 .tabs {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr; /* every tab the width of the widest */
+  width: fit-content; /* the strip hugs its tabs, not the full pane */
   gap: 0.3rem;
   margin: 0 0 -1px 0;
   position: relative;
 }
 .tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   font: inherit;
   font-size: 0.85rem;
   padding: 0.4rem 1rem;
@@ -124,6 +181,11 @@ main {
   cursor: pointer;
   position: relative;
   z-index: 0; /* behind the sheet (.guest-body, z-index: 1) */
+}
+.tabs button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 .tabs button:hover { color: var(--text); }
 .tabs button.active {
@@ -319,9 +381,27 @@ main {
 /* Compile errors / module facts can span multiple lines. */
 .module-info { white-space: pre-wrap; }
 
-/* --- run bar (between the guest and statistics panes) --- */
+/* --- control pane (mode tabs + run button, between guest and stats) --- */
+/* Folder tabs, same as the guest pane: the `.tabs` strip sits over the
+   `.control-body` sheet. The body squares its top corners and sits at z-index 1
+   so the active tab merges into it (see .tabs / .guest-body above). */
 
-.run-bar { display: flex; }
+.control { display: flex; flex-direction: column; }
+.control-body {
+  position: relative;
+  z-index: 1;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  /* Holds the active mode's content (the local explainer or the peer controls);
+     the Prove button lives below the pane. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.local-explainer p { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
+/* Attest: not yet available — dimmed, with a "coming soon" tooltip. */
+.tabs button.soon { color: color-mix(in srgb, var(--muted) 55%, var(--field)); cursor: help; }
+.tabs button.soon:hover { color: color-mix(in srgb, var(--muted) 55%, var(--field)); }
 #run {
   width: 100%;
   font: inherit;
@@ -335,9 +415,220 @@ main {
   cursor: pointer;
 }
 #run:hover:not(:disabled) { background: color-mix(in srgb, var(--prover) 30%, white); }
-#run:disabled { opacity: 0.5; cursor: wait; }
+#run:disabled { opacity: 0.5; cursor: not-allowed; }
 #run.done { background: var(--prover); border-color: var(--prover); color: #fff; }
 #run.error { background: var(--err); border-color: var(--err); color: #fff; }
+
+/* --- peer mode: invite button, QR panel, connected row --- */
+
+/* 1×2 grid: the mode description above the invite button (or, once connected,
+   the peer's address + disconnect). */
+.peer-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+.peer-desc { margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
+.peer-controls .invite { justify-self: start; }
+.invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.9rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px dashed var(--verifier);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.invite svg { width: 15px; height: 15px; flex: none; }
+.invite:hover { color: var(--text); }
+/* Consolidated connection box: status header, an info table (IP + live ping),
+   and the disconnect link at the bottom. */
+.remote-conn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--verifier);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--verifier) 8%, white);
+}
+.remote-conn .remote-status { font-size: 0.85rem; }
+.remote-conn .link-btn { align-self: flex-start; } /* disconnect, bottom-left */
+
+/* The info table: IP address + a live ping readout, divided from the status. */
+.peer-info {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.9rem;
+  align-items: center;
+  margin: 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--verifier) 30%, transparent);
+  font-size: 0.78rem;
+}
+.peer-info dt {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.68rem;
+}
+.peer-info dd {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+}
+.peer-ping { display: inline-flex; align-items: center; gap: 0.4rem; }
+.ping-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--prover); /* green = alive */
+  animation: ping-pulse 1.4s ease-in-out infinite;
+}
+.ping-dot.offline { background: var(--muted); animation: none; }
+@keyframes ping-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--prover) 45%, transparent); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 3px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ping-dot { animation: none; }
+}
+.invite-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+#invite-qr { background: #fff; border-radius: var(--radius); }
+.invite-link {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--verifier);
+  word-break: break-all;
+  max-width: 20rem;
+}
+.remote-status { font-size: 0.8rem; color: var(--muted); white-space: pre-line; }
+
+/* --- verifier device view (replaces the authoring UI when connected) --- */
+.verifier-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.45rem;
+  padding: 1.5rem 1rem;
+}
+.verifier-mark {
+  font-size: 2.5rem;
+  line-height: 1;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.verifier-headline { font-size: 1.05rem; font-weight: 600; color: var(--text); }
+.verifier-sub { margin: 0; font-size: 0.85rem; color: var(--muted); }
+
+/* Connect gate: the opt-in shown on arrival via a join link. */
+.verifier-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.55rem;
+  padding: 1.5rem 1rem;
+  max-width: 26rem;
+  margin: 0 auto;
+}
+.verifier-gate .verifier-sub { line-height: 1.5; }
+.verifier-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.2rem 0 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: #7a5b00;
+  background: #fdf3d3;
+  border: 1px solid #e6c65c;
+  border-radius: var(--radius);
+}
+.verifier-note svg { width: 1em; height: 1em; flex: none; }
+.verifier-gate .verifier-actions { margin-top: 0.3rem; }
+
+/* Incoming-request layout: an eyebrow caption, the human summary (title +
+   description), then a compact two-row meta table for the technical facts.
+   The pane is the box — keep this plain to avoid a border-in-a-border. */
+.verifier-run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.verifier-eyebrow {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--verifier);
+}
+.verifier-title { display: block; font-size: 1rem; color: var(--text); }
+.verifier-desc { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--muted); }
+.verifier-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.9rem;
+  align-items: baseline;
+  margin: 0.3rem 0 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid color-mix(in srgb, var(--verifier) 25%, transparent);
+  font-size: 0.78rem;
+}
+.verifier-meta dt {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.68rem;
+}
+.verifier-meta dd {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+  word-break: break-word;
+}
+.verifier-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.9rem;
+}
+.accept-btn {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  color: #fff;
+  background: var(--verifier);
+  border: 1px solid var(--verifier);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.accept-btn:hover { background: color-mix(in srgb, var(--verifier) 85%, black); }
+
+.link-btn {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--verifier);
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 .spinner {
   display: inline-block;
@@ -410,7 +701,10 @@ main {
   transition: opacity 0.12s ease;
   pointer-events: none;
 }
-.tooltip.visible { opacity: 1; visibility: visible; }
+.tooltip.visible { opacity: 1; visibility: visible; pointer-events: auto; }
+.tooltip a { color: var(--link); }
+
+.peer-desc .help { margin-left: 0.2em; vertical-align: middle; }
 .stat-val {
   font-family: ui-monospace, monospace;
   font-size: 1.35rem;
