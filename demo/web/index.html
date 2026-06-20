@@ -56,14 +56,91 @@
     </header>
 
     <main>
-      <section class="guest" aria-label="Guest">
+      <!-- Control pane: pick how to run, then run. Local proves and verifies on
+           this machine; Peer proves to a remote verifier over WebRTC; Attest
+           (coming soon) obtains an attestation from a notary. -->
+      <section class="control" id="control" aria-label="Run mode">
+        <div class="tabs" id="control-tabs" role="tablist">
+          <button data-mode="local" class="active" role="tab">local</button>
+          <button data-mode="peer" role="tab">peer</button>
+          <button data-mode="attest" class="soon" role="tab" tabindex="0"
+                  data-tip="Connect to a Notary and obtain a publicly verifiable attestation. Coming soon.">attestation</button>
+        </div>
+
+        <div class="pane control-body" id="control-body">
+          <!-- Peer mode: invite a verifier (QR / link), then prove to them. -->
+          <div class="peer-controls" id="peer-controls" hidden>
+            <p class="peer-desc">Connect to a peer using WebRTC<span class="help" tabindex="0" role="note" aria-label="about WebRTC" data-tip-html="WebRTC connections are established using <a href='https://peerjs.com' target='_blank' rel='noopener'>PeerJS</a>.">
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" />
+                  <circle cx="8" cy="4.6" r="0.95" fill="currentColor" />
+                  <rect x="7.1" y="6.7" width="1.8" height="5.2" rx="0.9" fill="currentColor" />
+                </svg>
+              </span> and prove a program to them.</p>
+            <button id="invite" class="invite">
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.1" />
+                <path d="M1.7 8h12.6" fill="none" stroke="currentColor" stroke-width="1.1" />
+                <ellipse cx="8" cy="8" rx="2.7" ry="6.3" fill="none" stroke="currentColor" stroke-width="1.1" />
+              </svg>
+              invite a peer
+            </button>
+            <div class="remote-conn" id="remote-connected" hidden>
+              <span class="remote-status" id="remote-status"></span>
+              <dl class="peer-info">
+                <dt>IP address</dt>
+                <dd id="peer-ip">unknown</dd>
+                <dt>connection</dt>
+                <dd id="peer-conn">—</dd>
+                <dt>ping</dt>
+                <dd class="peer-ping">
+                  <span class="ping-dot offline" id="peer-ping-dot" aria-hidden="true"></span>
+                  <span id="peer-ping-val">—</span>
+                </dd>
+              </dl>
+              <button class="link-btn" id="remote-disconnect">disconnect</button>
+            </div>
+            <div class="invite-panel" id="invite-panel" hidden>
+              <canvas id="invite-qr" hidden></canvas>
+              <a id="invite-link" class="invite-link" target="_blank" rel="noreferrer"></a>
+              <div class="remote-status" id="invite-status">creating invite…</div>
+              <button class="link-btn" id="invite-cancel">cancel</button>
+            </div>
+          </div>
+
+          <!-- Local mode: an explainer of what local mode does. -->
+          <div class="local-explainer" id="local-explainer">
+            <p>Run the SpeakUp prover and verifier locally in your browser to test it's capability and performance.</p>
+            </br>
+            <p>To test under more realistic network conditions, try peer mode.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="guest" id="guest-section" aria-label="Guest">
         <!-- Tabs (one per pre-included example, plus custom) and the example
              forms are injected by src/examples.ts; only `custom` is static. -->
-        <div class="tabs" id="guest-tabs">
-          <button data-tab="custom">custom</button>
+        <div class="tab-row">
+          <button class="info-tab" id="guest-info-tab" type="button" data-tab="about" aria-label="About this panel">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" />
+              <circle cx="8" cy="4.6" r="0.95" fill="currentColor" />
+              <rect x="7.1" y="6.7" width="1.8" height="5.2" rx="0.9" fill="currentColor" />
+            </svg>
+          </button>
+          <div class="tabs" id="guest-tabs">
+            <button data-tab="custom">custom</button>
+          </div>
         </div>
 
         <div class="pane guest-body" id="guest-body">
+        <!-- The (i) tab's content: an animation of how the VM works (the snippet
+             is inlined and mounted by vm-embed.ts) plus a short pane description. -->
+        <div class="guest-about" id="guest-about" hidden>
+          <p class="guest-intro">This panel selects the program to be proven in zero-knowledge.</p>
+          <p class="guest-intro">Example programs are included in addition to the custom selector which supports writing programs in AssemblyScript (a minimal Javascript-like language). SpeakUp can prove any program which compiles to WebAssembly.</p>
+          <div class="about-anim" id="about-anim"></div>
+        </div>
         <!-- Custom guest: write AssemblyScript (compiled to a module) or upload
              a .wasm, then orchestrate it below. -->
         <div class="guest-custom" id="custom-config" hidden>
@@ -99,9 +176,54 @@
         </div>
       </section>
 
-      <div class="run-bar">
-        <button id="run">Prove</button>
-      </div>
+      <!-- Verifier device view: shown instead of the authoring UI when this
+           device joined as the remote verifier. Starts in a waiting state, then
+           fills with the guest description once the prover starts a run. -->
+      <section class="pane verifier-view" id="verifier-view" aria-label="Verifier" hidden>
+        <!-- Connect gate: shown on arrival via a join link, before any
+             connection is made. Connecting reveals this device's IP to the
+             prover, so the user opts in here first. -->
+        <div class="verifier-gate" id="verifier-gate" hidden>
+          <div class="verifier-headline">A peer wants to prove something to you.</div>
+          <p class="verifier-sub">They'll request to prove a program, while keeping some information private.</p>
+          <p class="verifier-note">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 1.6 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <rect x="7.15" y="5.9" width="1.7" height="4.2" rx="0.85" fill="currentColor" />
+              <circle cx="8" cy="12.1" r="0.95" fill="currentColor" />
+            </svg>
+            Connecting reveals your IP address to the peer.
+          </p>
+          <div class="verifier-actions">
+            <button id="verifier-connect" class="accept-btn">Connect</button>
+            <button id="verifier-cancel" class="link-btn">cancel</button>
+          </div>
+        </div>
+
+        <div class="verifier-waiting" id="verifier-waiting" hidden>
+          <div class="verifier-mark">📡</div>
+          <div class="verifier-headline">Connected as verifier</div>
+          <div class="verifier-sub" id="verifier-sub">Waiting for the prover to initiate a proof…</div>
+        </div>
+
+        <div class="verifier-run" id="verifier-run" hidden>
+          <span class="verifier-eyebrow" id="verifier-run-label">incoming request</span>
+          <b class="verifier-title" id="verifier-title"></b>
+          <p class="verifier-desc" id="verifier-desc"></p>
+          <dl class="verifier-meta">
+            <dt>module</dt>
+            <dd id="verifier-module"></dd>
+            <dt>parameters</dt>
+            <dd id="verifier-params"></dd>
+          </dl>
+          <div class="verifier-actions" id="verifier-actions" hidden>
+            <button id="verifier-accept" class="accept-btn">Accept &amp; verify</button>
+            <button id="verifier-decline" class="link-btn">decline</button>
+          </div>
+        </div>
+      </section>
+
+      <button id="run">Prove</button>
 
       <section class="pane stats" id="stats" aria-label="Statistics" hidden>
         <div class="stat-grid">
@@ -125,7 +247,7 @@
             <div class="stat-label">
               time
               <span class="help" tabindex="0" role="note" aria-label="help"
-                    data-tip="End-to-end proving and verification time, running locally on your machine.">
+                    data-tip="End-to-end proving and verification time.">
                 <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                   <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" />
                   <circle cx="8" cy="4.6" r="0.95" fill="currentColor" />
@@ -144,8 +266,11 @@
     </main>
 
     <footer>
-      <a href="https://privacy-ethereum.github.io/speakup/">Learn more about SpeakUp.</a>
-      This page has no server: nothing you type leaves your browser.
+      This is an early preview: <b>it is unaudited and not mature.</b>
+      <br/>
+      It should not handle highly sensitive information or be relied upon for soundness.<br/>
+      <br/>
+      <a href="https://privacy-ethereum.github.io/speakup/">Learn more about how it works.</a>
     </footer>
 
     <script type="module" src="/src/main.ts"></script>
