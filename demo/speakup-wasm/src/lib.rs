@@ -51,6 +51,22 @@ fn busy() -> JsError {
     JsError::new("party is busy (a call is in flight) or already closed")
 }
 
+/// Rayon pool size, recorded by [`initialize`]; 1 until it runs.
+static THREADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+/// Gate bits per parallel proving segment ([`Prover::with_segment_cost`]),
+/// scaled inversely with the thread count to hold the segments-per-worker
+/// ratio constant — too-fine segments pay an O(segments²) boundary-seeding
+/// cost. `1_800_000` anchors to mpz's `sha256` bench (~100k bits at 18
+/// workers); `None` at 1 worker proves each chunk as a single segment.
+fn segment_cost() -> Option<usize> {
+    let threads = THREADS.load(std::sync::atomic::Ordering::Relaxed);
+    if threads <= 1 {
+        return None;
+    }
+    Some((1_800_000 / threads).max(50_000))
+}
+
 /// Initializes threading for this wasm instance: starts the web-spawn
 /// spawner and builds the rayon global pool with `threads` workers.
 ///
@@ -62,6 +78,9 @@ fn busy() -> JsError {
 pub async fn initialize(threads: usize) -> Result<(), JsValue> {
     use std::sync::atomic::{AtomicBool, Ordering};
     static STARTED: AtomicBool = AtomicBool::new(false);
+    // Record the pool size before the idempotency guard so `segment_cost` sees
+    // it even if a later call short-circuits.
+    THREADS.store(threads.max(1), Ordering::Relaxed);
     if STARTED.swap(true, Ordering::Relaxed) {
         return Ok(());
     }
@@ -344,7 +363,11 @@ impl Party {
     /// `module_wasm`.
     pub fn prover(port: MessagePort, module_wasm: Vec<u8>) -> Result<Party, JsError> {
         let module = parse_module(&module_wasm)?;
-        let engine = Engine::Prover(Prover::new(module.clone(), prover_svole()).map_err(err)?);
+        let engine = Engine::Prover(
+            Prover::new(module.clone(), prover_svole())
+                .map(|p| p.with_segment_cost(segment_cost()))
+                .map_err(err)?,
+        );
         Ok(Party::wrap(Inner {
             ctx: port_ctx(port)?,
             engine,
@@ -356,7 +379,11 @@ impl Party {
     /// `module_wasm`.
     pub fn verifier(port: MessagePort, module_wasm: Vec<u8>) -> Result<Party, JsError> {
         let module = parse_module(&module_wasm)?;
-        let engine = Engine::Verifier(Verifier::new(module.clone(), verifier_svole()).map_err(err)?);
+        let engine = Engine::Verifier(
+            Verifier::new(module.clone(), verifier_svole())
+                .map(|v| v.with_segment_cost(segment_cost()))
+                .map_err(err)?,
+        );
         Ok(Party::wrap(Inner {
             ctx: port_ctx(port)?,
             engine,
