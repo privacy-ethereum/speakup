@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Alert variant of favicon.svg: the same head mark, but the line is drawn
+       in alert red. Swapped in as the tab favicon by notify.ts when a peer
+       connects or a request arrives while the tab is backgrounded. -->
+  <rect width="128" height="128" rx="26" fill="#161b23"/>
+  <g transform="translate(27.8,12) scale(1.05)">
+    <g transform="translate(-58.931034,-23.850906)">
+      <g transform="matrix(3.7958826,-1.3165313,1.3165313,3.7958826,-1.3558709,34.2099)">
+        <g transform="matrix(0.88809147,-0.04767693,0.04767693,0.88809147,2.5577301,3.3657977)">
+          <path
+            d="m 13.679067,29.229493 3.89253,-3.70287 c 0,0 1.0789,0.615238 3.570203,1.158403 2.619,0.222 1.9142,-3.058026 1.9142,-3.058026 0,0 1.651144,-1.156 1.160046,-1.456997 -0.452186,-0.277147 -1.888282,-1.680728 -1.888282,-1.680728 0,0 1.628063,-0.05353 2.412962,0.01469 0.399,-0.467 -0.304464,-2.141431 -0.304464,-2.141431 0,0 1.44091,-0.159313 2.528738,-0.747532 C 27.77,16.728 24.238627,13.819801 24.705457,11.522801 25.070845,4.6058517 20.60485,1.5422873 13.485994,1.732626"
+            fill="none" stroke="#e5484d" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

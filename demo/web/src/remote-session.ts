@@ -7,6 +7,7 @@
 // verifier (guest).
 
 import { joinInvite, type ControlMsg, type RemoteEvents, type RemoteLink } from "./remote";
+import { notifyPeerConnected, notifyProverRequest } from "./notify";
 import { compileAscSource } from "./guest-module";
 import { sha256Hex } from "./dom";
 import type { RemoteMode, RunController } from "./run-controller";
@@ -122,6 +123,7 @@ export const initRemoteSession = (opts: {
     // peer" — refresh it (enabled once the workers are up) to prove to them.
     runButton.set(controller.readyCount() === 2 ? "idle" : "loading");
     beginPeerSession(link, "verifier");
+    notifyPeerConnected();
   };
 
   const onClose = (_reason: string) => {
@@ -150,6 +152,7 @@ export const initRemoteSession = (opts: {
     if (remote.kind !== "guest" || controller.isRunning() || pendingProposal) return;
     pendingProposal = msg;
     verifierView.showProposal(msg);
+    notifyProverRequest();
   };
 
   /// Resolve the guest module (compiling + hash-checking the source for a custom

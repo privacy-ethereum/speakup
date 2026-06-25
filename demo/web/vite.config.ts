@@ -2,6 +2,61 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { defineConfig, type Plugin } from "vite";
+import { PeerServer } from "peer";
+import stun from "stun";
+
+// Peer mode needs two things from a server, and both run locally beside the dev
+// server so development depends on no external service (the client points at
+// them in dev — see src/remote.ts):
+//
+//   • signaling — a PeerJS broker that introduces the two peers and relays
+//     their SDP/ICE; it never sees the connection itself.
+//   • NAT traversal — a STUN server that tells a peer its own reachable
+//     address, so it can offer a candidate the other side can connect to.
+//
+// No TURN relay: same-machine / same-LAN peers connect directly on host
+// candidates. (On Firefox that needs `media.peerconnection.ice.obfuscate_host_
+// addresses = false` in about:config, or a running mDNS responder — otherwise
+// host candidates are masked as unresolvable `.local` names.)
+//
+// Both are dev-only. The broker runs standalone rather than mounted on Vite's
+// HTTP server, to stay clear of the HMR WebSocket upgrade handling.
+const DEV_PEER_PORT = 9000; // keep in sync with src/remote.ts
+const DEV_STUN_PORT = 3478; // keep in sync with src/remote.ts
+
+const peerBroker = (): Plugin => ({
+  name: "peer-broker",
+  apply: "serve",
+  configureServer(vite) {
+    PeerServer({ port: DEV_PEER_PORT, path: "/" }, (server) => {
+      vite.config.logger.info(`  ➜  PeerJS broker:  ws://localhost:${DEV_PEER_PORT}/`);
+      // Drop the broker when the dev server stops (e.g. a config-change restart),
+      // so the port is free for the next start.
+      vite.httpServer?.once("close", () => server.close());
+    });
+  },
+});
+
+const stunServer = (): Plugin => ({
+  name: "stun-server",
+  apply: "serve",
+  configureServer(vite) {
+    const srv = stun.createServer({ type: "udp4" });
+    // Reply to each binding request with the source address we saw, so the peer
+    // learns its own reflexive candidate. That's all browsers need at gathering
+    // time; the peer-to-peer connectivity checks they run themselves.
+    srv.on("bindingRequest", (req, rinfo) => {
+      const msg = stun.createMessage(stun.constants.STUN_BINDING_RESPONSE);
+      msg.setTransactionId(req.transactionId);
+      msg.addXorAddress(rinfo.address, rinfo.port);
+      srv.send(msg, rinfo.port, rinfo.address);
+    });
+    srv.listen(DEV_STUN_PORT, () =>
+      vite.config.logger.info(`  ➜  STUN server:    udp://localhost:${DEV_STUN_PORT}/`),
+    );
+    vite.httpServer?.once("close", () => srv.close());
+  },
+});
 
 // SharedArrayBuffer (threaded wasm) needs cross-origin isolation. The dev and
 // preview servers send the headers; on GitHub Pages (which can't set headers)
@@ -60,7 +115,7 @@ export default defineConfig({
   // site owns the root; the Pages workflow nests the demo under /demo/).
   base: "/speakup/demo/",
   define: { __PKG_VERSION__: JSON.stringify(pkgVersion) },
-  plugins: [coiServiceworker()],
+  plugins: [coiServiceworker(), peerBroker(), stunServer()],
   server: { headers: coiHeaders },
   preview: { headers: coiHeaders },
   // The AssemblyScript compiler (lazy-loaded for the custom tab) uses top-level

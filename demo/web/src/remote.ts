@@ -19,6 +19,32 @@
 import { Peer, type DataConnection } from "peerjs";
 import type { PartyRequest } from "./party.worker";
 
+// Dev: talk to a PeerJS broker running locally beside the vite dev server (see
+// the peer-broker plugin in vite.config.ts) instead of the public PeerJS cloud,
+// so development depends on no external service. The host follows the page
+// origin, so it also works when the dev server is opened over a LAN IP
+// (`vite --host`). Production uses the default cloud broker.
+//
+// The broker only handles signaling; ICE (the actual P2P link) is separate. In
+// dev we point at the local STUN server that runs beside the broker (see
+// vite.config.ts) instead of PeerJS's default public STUN + (often broken) TURN.
+// No TURN relay: same-machine / same-LAN peers connect directly on host
+// candidates. On Firefox that needs `media.peerconnection.ice.obfuscate_host_
+// addresses = false` in about:config (otherwise host candidates are masked as
+// unresolvable `.local` names). Production keeps PeerJS's default ICE config.
+const DEV_PEER_PORT = 9000; // keep in sync with vite.config.ts
+const DEV_STUN_PORT = 3478; // keep in sync with vite.config.ts
+const newPeer = (): Peer =>
+  import.meta.env.DEV
+    ? new Peer({
+        host: location.hostname,
+        port: DEV_PEER_PORT,
+        path: "/",
+        secure: false,
+        config: { iceServers: [{ urls: `stun:${location.hostname}:${DEV_STUN_PORT}` }] },
+      })
+    : new Peer();
+
 export type ControlMsg =
   /// First message after connect, host → guest (the guest's version travels in
   /// the connection metadata): both sides check that the two pages run the same
@@ -276,7 +302,7 @@ export const hostInvite = (
     onWaiting(url: string): void;
   },
 ): { cancel(): void } => {
-  const peer = new Peer();
+  const peer = newPeer();
   let link: RemoteLink | null = null;
   peer.on("open", (id) => opts.onWaiting(opts.joinUrl(id)));
   peer.on("connection", (conn) => {
@@ -306,7 +332,7 @@ export const joinInvite = (
   version: string,
   opts: LinkCallbacks,
 ): void => {
-  const peer = new Peer();
+  const peer = newPeer();
   let link: RemoteLink | null = null;
   peer.on("open", () => {
     const conn = peer.connect(hostId, {
